@@ -20,10 +20,10 @@ class CAFDynamics(nn.Module):
         self, x_out: Tensor, x_in: Tensor, noise: Union[Tensor, None]
     ) -> Tuple[Tensor, Tensor]:
 
-        if not self.estimate_trace:
-            trJ, e_dzdx = trace(x_out, x_in)
-        else:
+        if self.estimate_trace:
             trJ, e_dzdx = hutchinson_trace_estimator(x_out, x_in, noise)
+        else:
+            trJ, e_dzdx = trace(x_out, x_in)
 
         return trJ, e_dzdx
 
@@ -90,7 +90,7 @@ class ContinuousAmbientFlow(AbstractODE):
         return self.dynamics.estimate_trace
 
     def set_estimate_trace(self, estimate_trace: bool):
-        assert estimate_trace and self.noise_distribution is not None, (
+        assert not (estimate_trace and self.noise_distribution is None), (
             f"If trace is estimated a noise distribution should be set for ",
             f"{self.__class__.__name__}",
         )

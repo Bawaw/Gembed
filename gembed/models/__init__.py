@@ -3,3 +3,5 @@
 from .normalising_flow import NormalisingFlow
 from .model_protocol import ModelProtocol
 from .pca import PCA
+
+from .linear_point_flow import LinearPointFlow
