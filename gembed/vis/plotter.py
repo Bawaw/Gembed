@@ -96,6 +96,10 @@ class Plotter(pv.Plotter):
             else:
                 return self.add_pointcloud(x, **kwargs)
 
+        # if pyvista polydata object
+        if isinstance(x, pv.PolyData):
+            super().add_mesh(x, **kwargs)
+
         # if tensor or numpy array (mesh not supported)
         else:
             if isinstance(x, torch.Tensor):

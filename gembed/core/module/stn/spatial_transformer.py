@@ -15,11 +15,11 @@ class SpatialTransformer(nn.Module):
         self.fc = regressor_nn
 
         # set weights and bias of last layer to 0
-        if zero_initialise:
-            self.fc[-1].weight.data.zero_()
-            self.fc[-1].bias.data.copy_(
-                torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
-            )
+        # if zero_initialise:
+        #     self.fc[-1].weight.data.zero_()
+        #     self.fc[-1].bias.data.copy_(
+        #         torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
+        #     )
 
     def rotation_activation(self, theta, pos, batch):
         # θ ∈ [-π, π]

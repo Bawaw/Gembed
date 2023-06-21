@@ -9,7 +9,7 @@ from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from torch import Tensor, nn
 
 
-class CAFDynamics(nn.Module):
+class RCAFDynamics(nn.Module):
     def __init__(self, fdyn: nn.Module, estimate_trace: bool = False):
 
         super().__init__()
@@ -21,11 +21,11 @@ class CAFDynamics(nn.Module):
     ) -> Tuple[Tensor, Tensor]:
 
         if self.estimate_trace:
-            trJ, e_dzdx = hutchinson_trace_estimator(x_out, x_in, noise)
+            trJ, J = hutchinson_trace_estimator(x_out, x_in, noise)
         else:
-            trJ, e_dzdx = trace(x_out, x_in)
+            trJ, J = trace(x_out, x_in, return_jacobian=True)
 
-        return trJ, e_dzdx
+        return trJ, J
 
     def forward(
         self,
@@ -36,13 +36,14 @@ class CAFDynamics(nn.Module):
         **kwargs,
     ) -> List[Tensor]:
 
-        """Return the tuple (g_\phi(x_t), -Tr \left \{ J_{g_\phi}\right \}(x_t)).
+        """Return the tuple  \big(g_\phi(x_t), -Tr \left [ J_{g_\phi}(x_t)\right], \lVert g_\phi(x_t) \rVert^2, \lVert J_{g_\phi}(x_t) \rVert_F^2 \big)
 
-        If estimate_density is true, the density is estimated using Hutchinson trace estimation which states that
+        If estimate_density is true, the density is estimated using Hutchinson trace estimation;
         \begin{equation}
           Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A \epsilon ]
         \end{equation},
         as long as $p(\epsilon)$ has a zero mean and unit variance. The value for $\epsilon$ is fixed for each solve.
+
         """
 
         pos, *_ = states
@@ -59,25 +60,31 @@ class CAFDynamics(nn.Module):
             pos_dot = self.fdyn.forward(t, pos, c, **kwargs)
 
             # compute/approximate trace
-            trJ, _ = self.evaluate_trace(pos_dot, pos, noise=noise)
+            trJ, J = self.evaluate_trace(pos_dot, pos, noise=noise)
 
-        return pos_dot, -trJ
+            # kinetic energy
+            e_dot = torch.sum(pos_dot ** 2, 1)
+
+            # frobenius jacobian
+            n_dot = torch.sum(J ** 2, 1)
+
+        return pos_dot, -trJ, -e_dot, -n_dot
 
 
-class ContinuousAmbientFlow(AbstractODE):
+class RegularisedContinuousAmbientFlow(AbstractODE):
     def __init__(
         self,
-        dynamics: Union[CAFDynamics, nn.Module],
+        dynamics: Union[RCAFDynamics, nn.Module],
         estimate_trace: bool = False,
         noise_distribution: Union[DistributionProtocol, None] = None,
         **kwargs,
     ):
 
-        if not isinstance(dynamics, CAFDynamics):
+        if not isinstance(dynamics, RCAFDynamics):
             assert isinstance(
                 dynamics, nn.Module
             ), f"Expected, dynamics to be of type Dynamics or torch.nn.Module"
-            dynamics = CAFDynamics(dynamics)
+            dynamics = RCAFDynamics(dynamics)
 
         super().__init__(dynamics, **kwargs)
 
@@ -106,12 +113,11 @@ class ContinuousAmbientFlow(AbstractODE):
         return_time_steps: bool = False,
         **kwargs,
     ):
-
         """Integrate the dynamics and compute the change in log density, kinetic energy, and Frobenius norm of the Jacobian by solving the following ODE:
 
             \begin{bmatrix}
             x_{t_1}\\
-            \Delta p\\
+            \Delta \log p(x)\\
             \Delta e\\
             \Delta n
             \end{bmatrix}
@@ -141,9 +147,11 @@ class ContinuousAmbientFlow(AbstractODE):
             **kwargs: Additional arguments to pass to the odeint function.
 
         Returns:
-            If return_time_steps is False, returns a tuple containing the final position, divergence. Otherwise, returns a tuple containing the full sequence of position, divergence over the time steps."""
+            If return_time_steps is False, returns a tuple containing the final position, divergence, kinetic energy, and norm of the Jacobian. Otherwise, returns a tuple containing the full sequence of position, divergence, kinetic energy, and norm of the Jacobian over the time steps."""
 
-        divergence = torch.zeros(pos.shape[0]).to(pos.device)
+        divergence, kinetic_energy, norm_jacobian = torch.zeros(3, pos.shape[0]).to(
+            pos.device
+        )
 
         # if estimating trace with hutchinson sample an epsilon
         epsilon = None
@@ -165,11 +173,98 @@ class ContinuousAmbientFlow(AbstractODE):
             t, x, condition, noise=epsilon, batch=batch
         )
 
-        pos, divergence = self.odeint(
-            dynamics, (pos, divergence), t_span, self.dynamics.parameters()
+        pos, divergence, kinetic_energy, norm_jacobian = self.odeint(
+            dynamics,
+            (pos, divergence, kinetic_energy, norm_jacobian),
+            t_span,
+            self.dynamics.parameters(),
         )
 
         if not return_time_steps:
-            return pos[-1], divergence[-1]
+            return pos[-1], divergence[-1], kinetic_energy[-1], norm_jacobian[-1]
 
-        return pos, divergence
+        return pos, divergence, kinetic_energy, norm_jacobian
+
+
+# if __name__ == "__main__":
+#     import torch.nn as nn
+#     import numpy as np
+
+#     def gaussian_encoding(v: Tensor, b: Tensor) -> Tensor:
+#         r"""Computes :math:`\gamma(\mathbf{v}) = (\cos{2 \pi \mathbf{B} \mathbf{v}} , \sin{2 \pi \mathbf{B} \mathbf{v}})`
+#         Args:
+#             v (Tensor): input tensor of shape :math:`(N, *, \text{input_size})`
+#             b (Tensor): projection matrix of shape :math:`(\text{encoded_layer_size}, \text{input_size})`
+#         Returns:
+#             Tensor: mapped tensor of shape :math:`(N, *, 2 \cdot \text{encoded_layer_size})`
+#         See :class:`~rff.layers.GaussianEncoding` for more details.
+#         """
+#         vp = 2 * np.pi * v @ b.T
+#         return torch.cat((torch.cos(vp), torch.sin(vp)), dim=-1)
+
+#     class FDyn(nn.Module):
+#         """ Models the dynamics of the injection to the manifold. """
+
+#         def __init__(self):
+#             super().__init__()
+#             # expected format: N x (C * L)
+#             # +1 for time
+#             self.fc = nn.Sequential(nn.Linear(16, 512), nn.Tanh(), nn.Linear(512, 3))
+
+#             embed_dim = 8
+#             self.Wx = nn.Parameter(torch.randn(2 // 2, 3), requires_grad=False)
+#             self.Wc = nn.Parameter(torch.randn(12 // 2, 1), requires_grad=False)
+#             self.Wt = nn.Parameter(torch.randn(2 // 2, 1), requires_grad=False)
+
+#         def forward(self, t, x, c, **kwargs):
+#             # x_proj = x @ self.W[None, :] * 2 * np.pi
+#             # TODO: this is not correct
+#             #
+#             x = gaussian_encoding(x, self.Wx)
+#             c = gaussian_encoding(c, self.Wc)
+#             t = gaussian_encoding(t.unsqueeze(0), self.Wt)
+#             x = torch.concat([x, c, t.repeat([x.shape[0], 1])], -1)
+
+#             return self.fc(x)
+
+#     dynamics = RCAFDynamics(FDyn())
+#     network = RegularisedContinuousAmbientFlow(
+#         dynamics=dynamics,
+#         estimate_trace=False,
+#         # adjoint=True
+#         adjoint=False,
+#         method="rk4",
+#         atol=1e-9,
+#         rtol=1e-9,
+#     )
+
+#     x1 = torch.zeros(1, 3)
+#     z1 = torch.ones(1, 3)
+#     c1 = torch.tensor([[1]])
+
+#     x2 = torch.zeros(1, 3)
+#     z2 = torch.zeros(1, 3)
+#     c2 = torch.tensor([[2]])
+
+#     # dopri5,1e-9: convergence after 34, final: 1.8586704847748867e-14
+#     # dopri5,1: convergence after 35, final: 2.3064803715490585e-14
+
+#     dataset = [
+#         (x1, z1, c1),
+#         (x2, z2, c2),
+#     ]
+
+#     optimiser = torch.optim.Adam(network.parameters())
+
+#     for i in range(200):
+#         for x, z, c in dataset:
+#             optimiser.zero_grad()
+
+#             z_tilde, *_ = network.inverse(x, None, c)
+
+#             loss = (z_tilde - z).pow(2).mean()
+#             print(f"Epoch {i}: loss {loss.item()}")
+#             loss.backward()
+#             optimiser.step()
+
+#     breakpoint()

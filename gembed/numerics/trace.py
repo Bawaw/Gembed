@@ -12,7 +12,7 @@ def trace(x_out, x_in, return_jacobian=False) -> Tuple[Tensor, Tensor]:
     """Exact jacobian trace computed using autograd, optionally return Jacobian as vector if return_jacobian is True.
 
     \begin{equation}
-    \left(Tr \left \{ J_f \right \}(x_t), J_f\right
+    \big( Tr \left [ J_f(x_t) \right ] , J_f \big)
     \end{equation}
 
     """

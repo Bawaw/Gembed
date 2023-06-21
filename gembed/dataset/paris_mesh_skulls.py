@@ -21,7 +21,7 @@ class CleanParisMeshSkulls(InMemoryDataset, LightningDataModule):
     """ Skull surfaces extracted from the Paris dataset. """
 
     def __init__(
-        self, root=None, transform=None, pre_transform=None, isotropic_scaling=True
+            self, root=None, transform=None, pre_transform=None, pre_filter=None, isotropic_scaling=True, scale=None
     ):
         """
         Parameters
@@ -41,9 +41,9 @@ class CleanParisMeshSkulls(InMemoryDataset, LightningDataModule):
             root = os.path.join(path, self.subdir)
 
         self.isotropic_scaling = isotropic_scaling
-        self.scale = None
+        self.scale = scale
 
-        super().__init__(root, transform, pre_transform)
+        super().__init__(root, transform, pre_transform, pre_filter)
 
         print(f"Loading dataset: {self}")
         self.data, self.slices, self.scale = torch.load(self.processed_paths[0])
@@ -90,7 +90,12 @@ class CleanParisMeshSkulls(InMemoryDataset, LightningDataModule):
         # 1) get the in correspondence data
         data_list = self._raw_in_correspondence_data
 
-        # 2) preprocess the data
+        # 2) standardise the origin
+        self.origin = torch.stack([d.pos for d in data_list]).view(-1, 3).min(0).values
+        for d in data_list:
+            d.pos = d.pos - self.origin
+
+        # 3) preprocess the data
         data_list = [d for d in data_list if d is not None]
 
         if self.pre_filter is not None:
@@ -99,21 +104,29 @@ class CleanParisMeshSkulls(InMemoryDataset, LightningDataModule):
         if self.pre_transform is not None:
             data_list = [self.pre_transform(data) for data in data_list]
 
-        # 2.1) store intermeditate results
+        # 3.1) store intermeditate results
         path = os.path.join(self.processed_dir, "step_2_1")
         os.makedirs(path, exist_ok=True)
         data, slices = self.collate(data_list)
         torch.save((data, slices), os.path.join(path, self.processed_file_names[0]))
 
-        # 3) standardise the data
+        # 4) standardise the data
         if self.isotropic_scaling:
             # find the maximum boundary of the data samples
-            self.scale = torch.tensor(
-                max([(d.pos.abs().max()).item() for d in data_list])
-            )
+            # We /2 because we scale to [-1, 1]
+            if self.scale is None:
+                self.scale = (
+                    torch.tensor(max([d.pos.abs().max().item() for d in data_list])) / 2
+                )
 
             # isotropically scale the entire dataset with the same factor
             data_list = [self.scale_isotropically(d) for d in data_list]
+
+            for d in data_list:
+                d.pos = d.pos - 1
+
+
+        assert all([(d.pos.min() >= -1).all() and (d.pos.max() <= 1).all() for d in data_list])
 
         # PLOT RESULTS #
         # from gembed.vis.plotter import Plotter

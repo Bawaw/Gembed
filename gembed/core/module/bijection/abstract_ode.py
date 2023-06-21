@@ -14,11 +14,12 @@ class AbstractODE(InvertibleModule):
         self,
         dynamics: nn.Module,
         adjoint: bool = False,
-        rtol=1e-7,
-        atol=1e-9,
+        rtol=1e-5,
+        atol=1e-5,
         method: str = "dopri5",
         options=None,
         event_fn=None,
+        adjoint_options=None,
     ):
 
         super().__init__()
@@ -26,6 +27,7 @@ class AbstractODE(InvertibleModule):
         if adjoint:
             # if working with adjoint we need to let the ode know the parameters
             # of the ODE
+
             self.odeint = lambda fdyn, x, t_span, params: odeint_adjoint(
                 fdyn,
                 x,
@@ -36,6 +38,7 @@ class AbstractODE(InvertibleModule):
                 options=options,
                 event_fn=event_fn,
                 adjoint_params=params,
+                adjoint_options=adjoint_options,
             )
 
         else:

@@ -13,9 +13,7 @@ from torch.utils.data import Dataset
 from torch_scatter import scatter_mean
 
 
-class NormalisingFlow(
-    pl.LightningModule, InvertibleModule, DistributionProtocol, ModelProtocol
-):
+class NormalisingFlow(pl.LightningModule, InvertibleModule, DistributionProtocol):
     def __init__(
         self, base_distribution: DistributionProtocol, layers: InvertibleModule
     ):

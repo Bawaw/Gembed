@@ -7,7 +7,7 @@ import torch.nn as nn
 class ConcatSquashLinear(nn.Module):
     """Source: https://github.com/stevenygd/PointFlow/blob/master/models/diffeq_layers.py"""
 
-    def __init__(self, dim_in, dim_out, dim_c):
+    def __init__(self, dim_in, dim_out, dim_c, zero_init=False):
         super(ConcatSquashLinear, self).__init__()
         self._layer = nn.Linear(dim_in, dim_out)
         self._hyper_bias = nn.Linear(1 + dim_c, dim_out, bias=False)
