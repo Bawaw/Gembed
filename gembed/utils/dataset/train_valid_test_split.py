@@ -26,6 +26,8 @@ def train_valid_test_split(dataset, lengths=None, seed=42):
         lengths = subset_lengths
         for i, length in enumerate(lengths):
             if length == 0:
+                import warnings
+
                 warnings.warn(
                     f"Length of split at index {i} is 0. "
                     f"This might result in an empty dataset."

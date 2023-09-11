@@ -47,13 +47,15 @@ def plot_objects(
     )
     plotter.window_size = window_size
 
+    if "point_size" not in kwargs:
+        kwargs["point_size"] = 5
+
     for i, (shape, scalars) in enumerate(args):
         plotter.subplot(0, i)
         plotter.add_generic(
             shape,
             scalars=scalars,
             render_points_as_spheres=True,
-            point_size=5,
             **kwargs
         )
         if show_grid:

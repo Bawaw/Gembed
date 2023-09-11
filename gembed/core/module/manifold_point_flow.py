@@ -4,7 +4,7 @@ from torch_scatter import scatter_mean, scatter_sum
 from pytorch_lightning.utilities import grad_norm
 
 
-class PointFlow(pl.LightningModule):
+class ManifoldPointFlow(pl.LightningModule):
     """
     PointFlow is a PyTorch Lightning module that models a distribution using a shape distribution model (SDM)
     and a point distribution model (PDM).
@@ -150,7 +150,7 @@ class PointFlow(pl.LightningModule):
         return optimiser
 
 
-class PointFlowSTN(PointFlow):
+class ManifoldPointFlowSTN(ManifoldPointFlow):
     """
     PointFlowSTN is a subclass of PointFlow that incorporates a Spatial Transformer Network (STN) into the model.
 
@@ -348,7 +348,6 @@ class PointFlowSTN(PointFlow):
                 patience=int(1e4),
                 verbose=True,
                 min_lr=1e-7
-                # optimiser, patience=int(1e3), verbose=True, min_lr=1e-7
             ),
             "monitor": "train_loss",
             "interval": "step",
@@ -357,7 +356,7 @@ class PointFlowSTN(PointFlow):
         return optim_dict
 
 
-class RegularisedPointFlowSTN(PointFlowSTN):
+class RegularisedManifoldPointFlowSTN(PointFlowSTN):
     """TODO: Augmented Point Flow"""
 
     def __init__(self, lambda_e=1e-2, lambda_n=1e-2, lambda_m=0, **kwargs):
@@ -392,149 +391,46 @@ class RegularisedPointFlowSTN(PointFlowSTN):
         )
         return fm_loss.sum()
 
-    def _compute_loss_terms(self, x, batch):  # , data):
+    def _compute_loss_terms(self, x, batch):
 
         if self.stn is not None:
             x = self.stn(x, batch)
 
         n_samples_per_example = torch.bincount(batch)
 
-        condition = self.inverse(x, batch=batch)  # , data=data)
+        condition = self.inverse(x, batch=batch)
 
-        z, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
+        # MAE
+        if self.lambda_m == 0:
+            RDM = 0.0
+        else:
+            n_rdm_samples = 100
+            RDM = self.manifold_loss(
+                lambda c: self.pdm.forward(
+                    torch.randn(100, 3).to(x.device),
+                    batch=None,
+                    condition=c,
+                    return_combined_dynamics=False,
+                )[None],
+                condition,
+            )
+
+        _, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
             x,
             batch=batch,
             condition=condition,
             return_combined_dynamics=True,
         )
 
-        z[:, -1] = 0
+        log_px, kinetic_energy, norm_jacobian = scatter_sum(
+            torch.stack([log_px, kinetic_energy, norm_jacobian], -1), batch, dim=0
+        ).T
 
-        x_rec, log_px, kinetic_energy, norm_jacobian = self.pdm.forward(
-            z,
-            batch=batch,
-            condition=condition,
-            return_combined_dynamics=True,
-        )
-
-        NLL = (x - x_rec).pow(2).sum(-1).mean()
-
-        KE, NJ, RDM = (
-            torch.zeros(1).to(x.device),
-            torch.zeros(1).to(x.device),
-            torch.zeros(1).to(x.device),
-        )
+        NLL = -(log_px / n_samples_per_example)
+        KE = kinetic_energy / n_samples_per_example
+        NJ = norm_jacobian / n_samples_per_example
 
         return NLL, KE, NJ, RDM
-
-    # def _compute_loss_terms(self, x, batch):  # , data):
-
-    #     if self.stn is not None:
-    #         x = self.stn(x, batch)
-
-    #     n_samples_per_example = torch.bincount(batch)
-
-    #     condition = self.inverse(x, batch=batch)  # , data=data)
-
-    #     # VAE
-    #     # mean = self.mean_layer(condition)
-    #     # log_var = self.logvar_layer(condition)
-
-    #     # condition = mean + torch.exp(0.5 * log_var) * torch.randn_like(mean)
-    #     # RDM = torch.mean(
-    #     #     -0.5 * torch.sum(1 + log_var - mean ** 2 - log_var.exp(), dim=1), dim=0
-    #     # )
-
-    #     # MAE
-    #     if self.lambda_m == 0:
-    #         RDM = 0.0
-    #     else:
-    #         n_rdm_samples = 100
-    #         RDM = self.manifold_loss(
-    #             lambda c: self.pdm.forward(
-    #                 torch.randn(100, 3).to(x.device),
-    #                 batch=None,
-    #                 condition=c,
-    #                 return_combined_dynamics=False,
-    #             )[None],
-    #             condition,
-    #         )
-
-    #     _, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
-    #         x,
-    #         batch=batch,
-    #         condition=condition,
-    #         return_combined_dynamics=True,
-    #     )
-
-    #     log_px, kinetic_energy, norm_jacobian = scatter_sum(
-    #         torch.stack([log_px, kinetic_energy, norm_jacobian], -1), batch, dim=0
-    #     ).T
-
-    #     NLL = -(log_px / n_samples_per_example)
-    #     KE = kinetic_energy / n_samples_per_example
-    #     NJ = norm_jacobian / n_samples_per_example
-
-    #     return NLL, KE, NJ, RDM
-
-    # def _compute_loss_terms(self, x, batch):  # , data):
-
-    #     if self.stn is not None:
-    #         x = self.stn(x, batch)
-
-    #     n_samples_per_example = torch.bincount(batch)
-
-    #     condition = self.inverse(x, batch=batch)  # , data=data)
-
-    #     NLL = condition.norm(dim=-1)
-
-    #     KE, NJ, RDM = (
-    #         torch.zeros(1).to(x.device),
-    #         torch.zeros(1).to(x.device),
-    #         torch.zeros(1).to(x.device),
-    #     )
-
-    #     return NLL, KE, NJ, RDM
-
-    # FOR DEBUGGING
-    # def inverse(self, X, data, batch=None, apply_stn=False, return_params=False):
-    #     if hasattr(self, "Zs") and hasattr(data, "idx"):
-    #         if return_params:
-    #             return self.Zs(data.idx), None
-    #         else:
-    #             return self.Zs(data.idx)
-    #     else:
-    #         return PointFlowSTN.inverse(X, batch, apply_stn, return_params)
-
-    # def inverse(self, X, batch=None, apply_stn=False, return_params=False, data=None):
-    #     """
-    #     Compute the inverse of the shape distribution model for a given input and batch after optionally transforming the data to canonical coordinates using the Spatial Transformer Network (STN).
-
-    #     Args:
-    #         X (torch.Tensor): The input tensor.
-    #         batch (torch.Tensor): The batch tensor.
-    #         apply_stn (bool): Whether to apply the STN transformation. Default is False.
-
-    #     Returns:
-    #         torch.Tensor or Tuple[torch.Tensor, Any]: The inverse of the shape distribution model. If `apply_stn` is True, returns a tuple containing the inverse and the STN transformation parameters.
-
-    #     """
-    #     if data is not None and hasattr(self, "Zs") and hasattr(data, "idx"):
-    #         return self.Zs(data.idx)
-
-    #     if self.stn is not None and apply_stn:
-    #         X, params = self.stn(X, batch, return_params=True)
-
-    #     result = super().inverse(X=X, batch=batch)
-    #     result = self.mean_layer(result)
-
-    #     if return_params and apply_stn:
-    #         if self.stn is not None:
-    #             return result, params
-    #         else:
-    #             return result, None
-
-    #     return result
 
     def on_before_optimizer_step(self, optimizer, X):
         # Compute the 2-norm for each layer
@@ -567,7 +463,6 @@ class RegularisedPointFlowSTN(PointFlowSTN):
 
         return loss
 
-    # def validation_step(self, valid_batch, batch_idx):
     def validation_step(self, valid_batch, batch_idx):
         x, batch = valid_batch.pos, valid_batch.batch
         NLL, KE, NJ = self._compute_loss_terms(x, batch)

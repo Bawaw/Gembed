@@ -1,5 +1,6 @@
 # /usr/bin/env python3
 
+import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -8,7 +9,7 @@ from sklearn.decomposition import PCA
 from umap import UMAP
 
 
-def plot_features_2D(Zs, umap_kwargs=None, file_name=None):
+def plot_features_2D(Zs, Z_colors=None, umap_kwargs=None, file_name=None, **kwargs):
     # embed data using PCA
     pca = PCA(n_components=2)
     Z_pca = pca.fit_transform(Zs.clone())
@@ -38,13 +39,18 @@ def plot_features_2D(Zs, umap_kwargs=None, file_name=None):
         ),
     }
 
+    if Z_colors is not None:
+        data["hue"] = torch.cat([Z_colors, Z_colors])
+
     # fix order of hue and style
     fig = sns.relplot(
         data=data,
         x="latent_1",
         y="latent_2",
         col="Method",
+        hue="hue",
         facet_kws=dict(sharex=False, sharey=False),
+        **kwargs
     )
 
     if file_name is not None:

@@ -9,20 +9,19 @@ def discrete_geodesic(
     X0,
     X1,
     f_local_metric=lambda x, y: (x - y).pow(2).sum(-1),
-    init_steps=None,
-    n_cps=6,
+    n_cps=5,
     return_energy=False,
     n_iters=100,
-    verbose=False
+    verbose=False,
 ):
     """
-    Computed the discrete geodesic curve between two points $X_1$ and $X_2$ based on a discretised curve consisting of n_cps nodes. It approximates the geodesic curve by iteratively optimizing the positions of intermediate points along the curve. If init_steps is None, the model instantiates the curve as a linear path.
+    Computed the discrete geodesic curve between two points $X_1$ and $X_2$ based on a discretised curve consisting of n_cps nodes. It approximates the geodesic curve by iteratively optimizing the positions of intermediate points along the curve. If cps is None, the model instantiates the curve as a linear path.
 
     Parameters
         X0: The starting point of the geodesic curve.
         X1: The ending point of the geodesic curve.
         f_local_metric (optional): A function that computes the local metric (distance) between two points. Default is the squared Euclidean distance.
-        init_steps (optional): Initial positions of the control points along the curve. If not provided, linear interpolation is used to generate the initial positions.
+        cps (optional): Initial positions of the control points along the curve. If not provided, linear interpolation is used to generate the initial positions.
         n_cps (optional): The number of discrete steps (control points) (including X1 and X2) on the geodesic curve. Default is 6.
         return_energy (optional): A boolean flag indicating whether to return the energy of the curve. Default is False.
         n_iters (optional): The number of iterations for the optimization process. Default is 10.
@@ -46,80 +45,70 @@ def discrete_geodesic(
     assert (X0.shape[0] == 1) and (X1.shape[0] == 1)
 
     # if not initial curve, use linear interpolation of points
-    with torch.set_grad_enabled(False):
-        if init_steps is None:
-            init_steps = torch.concat(
-                [
-                    torch.lerp(input=X0, end=X1, weight=t)
-                    for t in torch.linspace(0, 1, n_cps).to(X1.device)
-                ]
-            )
-        else:
-            assert (
-                init_steps.shape(0) == n_cps
-            ), "Size of init_steps and n_cps does not match."
+    C0, C1 = X0.detach(), X1.detach()
 
-        # Δt
-        delta_t = 1 / (n_cps - 1)
-
-        with torch.set_grad_enabled(True):
-
-            # SETUP OPTIMISATION PARAMETERS
-            patience = 10
-            delta = 1e-2
-            counter = 0
-            min_energy = float('inf')
-
-            # optimise the control points between start and end-point
-            control_points = init_steps[1:-1].requires_grad_(True)
-            optimiser = torch.optim.Adam([control_points])
-
-            # Euler integration scheme
-            for i in range(n_iters):
-                optimiser.zero_grad()
-
-                # first and last step remain fixed
-                Xs = torch.concat(
-                    [
-                        init_steps[:1].requires_grad_(False),
-                        control_points,
-                        init_steps[-1:].requires_grad_(False),
-                    ]
-                )
-
-                # compute distance between consecutive pairs
-                consec_dist = f_local_metric(Xs[:-1], Xs[1:]) / delta_t
-                assert consec_dist.shape == torch.Size([n_cps-1])
-
-                # E(γ) = 0.5 * (∫g(γ˙(t), γ˙(t))) dt
-                energy = 0.5 * consec_dist.sum()
-
-                if verbose:
-                    print(f"Discrete Geodesic, Epoch: {i}, Energy: {energy:.2f}")
-
-                # when all consecutive distances are the same we converged
-                if torch.isclose(consec_dist[None], consec_dist[:, None]).all():
-                    break
-
-                # EARLY STOPPING
-                if energy < min_energy:
-                    min_energy = energy
-                    counter  = 0
-                elif energy > (min_energy + delta):
-                    counter += 1
-                if counter >= patience:
-                    break
-
-                energy.backward()
-                optimiser.step()
-
-    geodesic = torch.concat(
+    # Note: we detach X0 and X1 here and create an seperate graph
+    Cs = torch.concat(
         [
-            X0,
-            control_points,
-            X1,
+            torch.lerp(input=C0, end=C1, weight=t)
+            for t in torch.linspace(0, 1, n_cps).to(X1.device)
         ]
-    )
+    )[1:-1]
+
+    # Δt
+    delta_t = 1 / (n_cps - 1)
+
+    with torch.set_grad_enabled(True):
+
+        # SETUP OPTIMISATION PARAMETERS
+        patience = 10
+        decimals = 6
+        counter = 0
+        min_energy = float("inf")
+
+        # optimise the control points between start and end-point
+        Cs = Cs.requires_grad_(True)
+        optimiser = torch.optim.Adam([Cs])
+
+        # Euler integration scheme
+        for i in range(n_iters):
+            optimiser.zero_grad()
+
+            # first and last step remain fixed
+            Xs = torch.concat([C0, Cs, C1])
+
+            # compute distance between consecutive pairs
+            consec_dist = f_local_metric(Xs[:-1], Xs[1:]) / delta_t
+            assert consec_dist.shape == torch.Size([n_cps - 1])
+
+            # E(γ) = 0.5 * (∫g(γ˙(t), γ˙(t))) dt
+            energy = 0.5 * consec_dist.sum()
+
+            if verbose:
+                print(f"Discrete Geodesic, Epoch: {i}, Energy: {energy:.6f}")
+
+            # when all consecutive distances are the same we converged
+            # if torch.isclose(consec_dist[None], consec_dist[:, None]).all():
+            #     break
+
+            # EARLY STOPPING
+            energy_rounded = energy.round(decimals=decimals)
+            if energy_rounded < min_energy:
+                min_energy = energy_rounded
+                counter = 0
+            else:
+                counter += 1
+
+            if counter >= patience:
+                break
+
+            energy.backward()
+            optimiser.step()
+
+        # final intermediate control points
+        Cs = Cs.detach()
+
+    geodesic = torch.concat([X0, Cs, X1])
     energy = 0.5 * (f_local_metric(geodesic[:-1], geodesic[1:]) / delta_t).sum()
 
     if not return_energy:
@@ -128,17 +117,195 @@ def discrete_geodesic(
     return geodesic, energy
 
 
-# if __name__ == "__main__":
-#     X1 = torch.tensor([0.0, 0.0])
-#     X2 = torch.tensor([1.0, 1.0])
+def batch_jvp(func, inputs, v=None, create_graph=True):
+    # https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/utils.py
+    batch_size = inputs.size(0)
+    z_dim = inputs.size(1)
+    if v is None:
+        v = (
+            torch.eye(z_dim)
+            .unsqueeze(0)
+            .repeat(batch_size, 1, 1)
+            .view(-1, z_dim)
+            .to(inputs)
+        )
+    inputs = inputs.repeat(1, z_dim).view(-1, z_dim)
+    jac = (
+        torch.autograd.functional.jvp(func, inputs, v=v, create_graph=create_graph)[1]
+        .view(batch_size, z_dim, -1)
+        .permute(0, 2, 1)
+    )
+    return jac
 
-#     # custom metric
-#     f_local_metric = lambda x, y: (x - y).pow(2).sum(-1)
 
-#     # Compute the geodesic curve
-#     geodesic, energy = discrete_geodesic(X1, X2, return_energy=True)
+def get_Identity_proj_Riemannian_metric(f, z, zdot=None, create_graph=False):
+    # https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py
+    if zdot is None:
+        J = batch_jvp(f, z, create_graph=create_graph)
+        return torch.einsum("nij,nik->njk", J, J)
+    else:
+        Jv = torch.autograd.functional.jvp(f, z, v=zdot, create_graph=create_graph)[1]
+        return torch.einsum("nij,nij->n", Jv, Jv)
 
-#     print(f"Geodesic: {geodesic}")
-#     print(
-#         f"Energy of the curve : {energy} is equal 1/2 * global distance {0.5*f_local_metric(X1,X2)} "
-#     )
+
+def riemannian_metric_G(Z):
+    W = torch.nn.Parameter(2e-2 * torch.randn(32 // 2, 2), requires_grad=False)
+
+    def f(v):
+        print("TODO!!! WARNING: this is not working yet!!!")
+        return v
+        # vp = 2 * np.pi * v @ W.T
+        # return torch.cat((torch.cos(vp), torch.sin(vp)), dim=-1)
+
+    return get_Identity_proj_Riemannian_metric(f, Z)
+
+
+def continuous_geodesic(
+    X0,
+    X1,
+    init_steps=None,
+    n_cps=5,
+    return_energy=False,
+    return_spline=False,
+    n_iters=100,
+    verbose=False,
+):
+
+    from torchcubicspline import natural_cubic_spline_coeffs, NaturalCubicSpline
+
+    # tensor should be represented in batch format of size 1 [1 x n]
+    assert (X0.shape[0] == 1) and (X1.shape[0] == 1)
+
+    # if not initial curve, use linear interpolation of points
+    C0, C1 = X0.detach(), X1.detach()
+
+    # Note: we detach X0 and X1 here and create an seperate graph
+    ts = torch.linspace(0, 1, n_cps).to(X1.device)
+    Cs = torch.concat([torch.lerp(input=C0, end=C1, weight=t) for t in ts])[1:-1]
+
+    with torch.set_grad_enabled(True):
+
+        # SETUP OPTIMISATION PARAMETERS
+        patience = 10
+        delta = 1e-2
+        counter = 0
+        min_loss = float("inf")
+
+        # optimise the control points between start and end-point
+        Cs = Cs.requires_grad_(True)
+        optimiser = torch.optim.Adam([Cs])
+
+        # Euler integration scheme
+        for i in range(n_iters):
+            optimiser.zero_grad()
+
+            # create spline
+            spline = NaturalCubicSpline(
+                natural_cubic_spline_coeffs(ts, torch.concat([C0, Cs, C1]))
+            )
+
+            # sample spline
+            t_samples = torch.rand(5).to(C0.device)
+            X_samples = spline.evaluate(t_samples)
+            X_dot_samples = spline.derivative(t_samples)
+
+            # compute riemannian dot product
+            breakpoint()
+            G_X = riemannian_metric_G(X_samples)
+
+            # when all riemannian metric tensors are identity tensors the manifold has
+            # Euclidean geometry everywhere and thus a straight line is the shortest distance
+            # between two points (linear interpolation)
+            if torch.isclose(G_X, torch.eye(2)).all():
+                break
+
+            # evaluate average dot products v^TGv
+            loss = torch.einsum(
+                "ni,nij,nj->n", X_dot_samples, G_X, X_dot_samples
+            ).mean()
+
+            if verbose:
+                print(f"Continuous Geodesic, Epoch: {i}, loss: {loss:.6f}")
+
+            # EARLY STOPPING
+            print("TODO: rewrite this")
+            if loss < min_loss:
+                min_loss = loss
+                counter = 0
+            elif loss > (min_loss + delta):
+                counter += 1
+            if counter >= patience:
+                break
+
+            geodesic_loss.backward()
+            optimiser.step()
+
+        # final intermediate control points
+        Cs = Cs.detach()
+
+    spline = NaturalCubicSpline(
+        natural_cubic_spline_coeffs(ts, torch.concat([C0, Cs, C1]))
+    )
+    t_samples = torch.linspace(0, 1, n_cps).to(C0)
+    X_samples = spline.evaluate(t_samples)
+
+    G_X = riemannian_metric_G(X_samples)
+
+    delta_X_samples = X_samples[1:] - X_samples[:-1]
+
+    # Δt
+    delta_t = 1 / (n_cps - 1)
+    # https://en.wikipedia.org/wiki/Geodesic
+    energy = (
+        0.5
+        * (
+            torch.einsum("ni,nij,nj->n", delta_X_samples, G_X[:-1], delta_X_samples)
+            / delta_t
+        ).sum()
+    )
+
+    result = (X_samples,)
+    if return_energy:
+        result += (energy,)
+
+    if return_spline:
+        result += (spline,)
+
+    return result
+
+    # geodesic = torch.concat([X0, Cs, X1])
+    # energy = 0.5 * (f_local_metric(geodesic[:-1], geodesic[1:]) / delta_t).sum()
+
+    # if not return_energy:
+    #     return geodesic
+
+    # return geodesic, energy
+
+
+if __name__ == "__main__":
+    X1 = torch.tensor([[0.0, 0.0]])
+    X2 = torch.tensor([[1.0, 1.0]])
+
+    X1 = X1.requires_grad_(True)
+    X2 = X2.requires_grad_(True)
+
+    # DISCRETE GEODESIC
+    # custom metric
+    f_local_metric = lambda x, y: (x - y).pow(2).sum(-1)
+
+    # # Compute the geodesic curve
+    geodesic, energy = discrete_geodesic(X1, X2, return_energy=True)
+
+    print(f"Discrete geodesic: {geodesic}")
+    print(
+        f"Energy of the curve : {energy} is equal 1/2 * global distance {0.5*f_local_metric(X1,X2).item()} "
+    )
+
+    # CONTINUOUS GEODESIC
+    geodesic, energy = continuous_geodesic(
+        X1, X2, riemannian_metric_G, return_energy=True
+    )
+    print(f"Continuous geodesic: {geodesic}")
+    print(
+        f"Energy of the curve : {energy} is equal 1/2 * global distance {0.5*f_local_metric(X1,X2).item()} "
+    )

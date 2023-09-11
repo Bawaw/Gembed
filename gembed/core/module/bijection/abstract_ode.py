@@ -60,7 +60,7 @@ class AbstractODE(InvertibleModule):
         z: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        time_steps: int = 10,
+        time_steps: int = 11,
         return_time_steps: bool = False,
         **kwargs
     ):
@@ -93,7 +93,7 @@ class AbstractODE(InvertibleModule):
         x: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        time_steps: int = 10,
+        time_steps: int = 11,
         return_time_steps: bool = False,
         **kwargs
     ):

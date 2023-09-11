@@ -22,6 +22,9 @@ class NormalisingFlow(pl.LightningModule, InvertibleModule, DistributionProtocol
         self.base_distribution = base_distribution
         self.layers = layers
 
+        # from copy import deepcopy
+        # self.layers_2 = deepcopy(layers)
+
     # ABSTRACT_INVERTIBLE_MODULE
     def forward(
         self,

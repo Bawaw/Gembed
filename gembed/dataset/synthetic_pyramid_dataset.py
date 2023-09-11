@@ -10,20 +10,25 @@ from pytorch_lightning.core.datamodule import LightningDataModule
 
 
 class SyntheticPyramidDataset(InMemoryDataset, LightningDataModule):
-
     def generate_pyramid(self, index):
         eps1 = np.random.uniform(-0.5, +0.5)
         eps2 = np.random.uniform(-0.5, +0.5)
         eps3 = np.random.uniform(-0.2, +0.2)
-        pyramid = pv.Pyramid([
-            [1+eps1, 1, 0],
-            [-1+eps1, 1, 0],
-            [-1-eps1, -1, 0],
-            [1-eps1, -1, 0],
-            [0, 0, 0.5+eps3]
-        ]).triangulate().extract_surface()
+        pyramid = (
+            pv.Pyramid(
+                [
+                    [1 + eps1, 1, 0],
+                    [-1 + eps1, 1, 0],
+                    [-1 - eps1, -1, 0],
+                    [1 - eps1, -1, 0],
+                    [0, 0, 0.5 + eps3],
+                ]
+            )
+            .triangulate()
+            .extract_surface()
+        )
 
-        #pyramid.plot(show_edges=True)
+        # pyramid.plot(show_edges=True)
 
         data = vtk_to_torch_geometric_data(pyramid)
         data.pos = data.pos.float()
@@ -38,6 +43,7 @@ class SyntheticPyramidDataset(InMemoryDataset, LightningDataModule):
         self.data, self.slices = self.collate(
             [self.generate_pyramid(i) for i in range(n_samples)]
         )
+
 
 # if __name__ == "__main__":
 #     import torch_geometric.transforms as tgt

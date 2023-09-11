@@ -43,7 +43,7 @@ class ContinuousDGM(nn.Module):
             raise ValueError("Invalid distance argument for ContinuousDGM.")
 
         # module parameters
-        self.temperature = nn.Parameter(torch.tensor(5.0), requires_grad=True)
+        self.temperature = nn.Parameter(torch.tensor(10.0), requires_grad=True)
         self.threshold = nn.Parameter(torch.tensor(0.5), requires_grad=True)
 
     def forward(self, x, A=None):
@@ -54,13 +54,52 @@ class ContinuousDGM(nn.Module):
         if A is not None:
             x = self.embed_f(x, A)
 
+
+        # VERSION 2
+        # compute the distance matrix
+        # D, _ = self.distance(x)
+        # A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
+        # W = (A / A.sum(1))
+
+        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
+        # return W @ x
+
+        # VERSION 3
         # compute the distance matrix
         D, _ = self.distance(x)
+        A = 1/(1 + D)
+        W = (A / A.sum(1))
 
-        # soft theshold the distances
-        A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
+        print("Number of neighbours",((((W > 0.01).sum() - W.shape[0])/2).item()))
+        return W @ x
+
+        # VERSION 4
+        # compute the distance matrix
+        # D, _ = self.distance(x)
+        # A = 1/(1 + D)
+        # W = (A / A.sum(1))
+
+        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
+        # return W @ x
 
         # convert adjacency matrix to edge weights
-        edge_index, edge_weight = dense_to_sparse(A)
+        # edge_index, edge_weight = dense_to_sparse(A)
+        # TODO: check if this is differentiable
+        # breakpoint()
 
-        return x, edge_index, edge_weight
+        # return x, edge_index, edge_weight
+
+        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
+        # return W @ x
+
+        # soft theshold the distances
+        #A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
+
+        #return (A / A.sum(1)) @ x
+
+        # convert adjacency matrix to edge weights
+        # edge_index, edge_weight = dense_to_sparse(A)
+        # TODO: check if this is differentiable
+        # breakpoint()
+
+        # return x, edge_index, edge_weight

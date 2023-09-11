@@ -5,21 +5,18 @@ import torch.nn as nn
 
 
 class SpatialTransformer(nn.Module):
-    def __init__(self, feature_nn, regressor_nn, zero_initialise=True):
+    def __init__(self, nn, zero_initialise=False):
         super().__init__()
 
-        # feature learning
-        self.feature = feature_nn
-
-        # y = Ax + b
-        self.fc = regressor_nn
+        # predictor
+        self.nn = nn
 
         # set weights and bias of last layer to 0
-        # if zero_initialise:
-        #     self.fc[-1].weight.data.zero_()
-        #     self.fc[-1].bias.data.copy_(
-        #         torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
-        #     )
+        if zero_initialise:
+            self.nn[-1].weight.data.zero_()
+            self.nn[-1].bias.data.copy_(
+                torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
+            )
 
     def rotation_activation(self, theta, pos, batch):
         # θ ∈ [-π, π]
@@ -72,13 +69,10 @@ class SpatialTransformer(nn.Module):
         if batch is None:
             batch = torch.zeros(pos.shape[0], dtype=torch.long).to(pos.device)
 
-        # get features
-        X = self.feature(pos, batch)
+        # get transformation
+        return self.nn(pos, batch)
 
-        # get transformations
-        return self.fc(X)
-
-    def forward(self, pos, batch, params=None):
+    def forward(self, pos, batch, params=None, return_params=False):
         if batch is None:
             batch = torch.zeros(pos.shape[0], dtype=torch.long).to(pos.device)
 
@@ -97,9 +91,12 @@ class SpatialTransformer(nn.Module):
         rotation_matrices = self.rotation_activation(theta, pos, batch)
         pos = torch.bmm(pos[:, None, :], rotation_matrices[batch]).squeeze(1)
 
+        if return_params:
+            return pos, params
+
         return pos
 
-    def inverse(self, pos, batch, params=None):
+    def inverse(self, pos, batch, params=None, return_params=False):
         if batch is None:
             batch = torch.zeros(pos.shape[0], dtype=torch.long).to(pos.device)
 
@@ -119,5 +116,8 @@ class SpatialTransformer(nn.Module):
 
         # Inverse TRANSLATE
         pos = pos - beta[batch]
+
+        if return_params:
+            return pos, params
 
         return pos

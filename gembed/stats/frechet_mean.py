@@ -12,7 +12,7 @@ def frechet_mean(
     Xs,
     init_mean=None,
     f_global_metric=lambda x, y: (x - y).pow(2).sum(-1),
-    n_iters=10,
+    n_iters=int(1e4),
     verbose=False
 ):
     r"""
@@ -38,9 +38,14 @@ def frechet_mean(
         init_mean = Xs[0].clone()
 
     with torch.set_grad_enabled(True):
-        X_hat = init_mean.requires_grad_(True)
+        # SETUP OPTIMISATION PARAMETERS
+        patience = 20
+        decimals = 6
+        counter = 0
+        min_dist = float("inf")
 
         # optimise for mean
+        X_hat = init_mean.requires_grad_(True)
         optimiser = torch.optim.Adam([X_hat])
 
         for i in range(n_iters):
@@ -50,6 +55,18 @@ def frechet_mean(
             average_distance = distance.mean()
             if verbose:
                 print(f"Frechet Mean, Epoch: {i}, Average distance: {average_distance:.4f}")
+
+            # EARLY STOPPING
+            average_distance_rounded = average_distance.round(decimals=decimals)
+            if average_distance_rounded < min_dist:
+                min_dist = average_distance_rounded
+                counter = 0
+            else:
+                counter += 1
+
+            if counter >= patience:
+                break
+
             average_distance.backward()
             optimiser.step()
 
