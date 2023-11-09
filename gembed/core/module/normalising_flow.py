@@ -22,64 +22,67 @@ class NormalisingFlow(pl.LightningModule, InvertibleModule, DistributionProtocol
         self.base_distribution = base_distribution
         self.layers = layers
 
-        # from copy import deepcopy
-        # self.layers_2 = deepcopy(layers)
-
     # ABSTRACT_INVERTIBLE_MODULE
     def forward(
         self,
         z: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        return_combined_dynamics: bool = False,
+        include_combined_dynamics: bool = False,
+        include_log_density: bool = False,
         **kwargs
     ) -> Union[List[Tensor], Tensor]:
 
-        # z=f(x), -log |det Jf|
-        x, log_det_jac_f, *combined_dynamics = self.layers.forward(
-            z=z, batch=batch, condition=condition, **kwargs
+        x, d_log_p, *combined_dynamics = self.layers.forward(
+            z=z, batch=batch, condition=condition,
+            include_combined_dynamics=include_combined_dynamics,
+            include_change_in_log_density=include_log_density,
+            **kwargs
         )
 
-        if not return_combined_dynamics:
-            return x
+        output = (x,)
 
-        log_pz = self.base_distribution.log_prob(z)
+        if include_log_density:
+            log_pz = self.base_distribution.log_prob(z)
+            log_px = log_pz + d_log_p
+            output += (log_px,)
 
-        # (Papamakarios, George, et al. "Normalizing Flows for Probabilistic Modeling and Inference." J. Mach. Learn. Res. 22.57 (2021): 1-64.)
-        # log px = log pz - log |det Jf|
-        #        => log pz + (-log |det Jf|)
-        log_px = log_pz + log_det_jac_f
+        if include_combined_dynamics:
+            output += tuple(combined_dynamics)
 
         # concat output
-        return [x, log_px] + combined_dynamics
+        return output[0] if len(output) == 1 else output
 
     def inverse(
         self,
         x: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        return_combined_dynamics: bool = False,
+        include_combined_dynamics: bool = False,
+        include_log_density: bool = False,
         **kwargs
     ) -> Union[List[Tensor], Tensor]:
 
         # z=f_inv(x), -log |det Jf_inv|
-        z, log_det_jac_f_inv, *combined_dynamics = self.layers.inverse(
-            x=x, batch=batch, condition=condition, **kwargs
+        z, d_log_p, *combined_dynamics = self.layers.inverse(
+            x=x, batch=batch, condition=condition,
+            include_combined_dynamics=include_combined_dynamics,
+            include_change_in_log_density=include_log_density,
+            **kwargs
         )
 
-        if not return_combined_dynamics:
-            return z
+        output = (z,)
 
-        log_pz = self.base_distribution.log_prob(z)
+        if include_log_density:
+            log_pz = self.base_distribution.log_prob(z)
+            log_px = log_pz + d_log_p
+            output += (log_px,)
 
-        # (Papamakarios, George, et al. "Normalizing Flows for Probabilistic Modeling and Inference." J. Mach. Learn. Res. 22.57 (2021): 1-64.)
-        # log px = log pz + log |det Jf_inv|
-        #        => log pz - (-log |det Jf_inv|)
-        #        => log pz + div(Jf_inv)
-        log_px = log_pz - log_det_jac_f_inv
+        if include_combined_dynamics:
+            output += tuple(combined_dynamics)
 
         # concat output
-        return [z, log_px] + combined_dynamics
+        return output[0] if len(output) == 1 else output
 
     # DISTRIBUTION_PROTOCOL
     def sample(
@@ -87,14 +90,14 @@ class NormalisingFlow(pl.LightningModule, InvertibleModule, DistributionProtocol
         n_samples: int,
         condition: Union[Tensor, None] = None,
         seed: Union[int, None] = None,
-        return_combined_dynamics: bool = True,
+        include_combined_dynamics: bool = True,
         **kwargs
     ) -> Union[List[Tensor], Tensor]:
 
         z, *_ = self.base_distribution.sample(n_samples, seed)
 
         return self.forward(
-            z, condition, return_combined_dynamics=return_combined_dynamics, **kwargs
+            z, condition, include_combined_dynamics=include_combined_dynamics, **kwargs
         )
 
     def log_prob(
@@ -105,7 +108,7 @@ class NormalisingFlow(pl.LightningModule, InvertibleModule, DistributionProtocol
     ):
 
         _, log_px, *_ = self.inverse(
-            x, batch=batch, condition=condition, return_combined_dynamics=True
+            x, batch=batch, condition=condition, include_combined_dynamics=True, include_log_density=True
         )
 
         return log_px

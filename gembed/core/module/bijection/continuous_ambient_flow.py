@@ -12,6 +12,7 @@ from torch import Tensor, nn
 class CAFDynamics(nn.Module):
     def __init__(self, fdyn: nn.Module, estimate_trace: bool = False):
 
+        # TODO: make fdyn callable
         super().__init__()
         self.fdyn = fdyn
         self.estimate_trace = estimate_trace
@@ -97,6 +98,37 @@ class ContinuousAmbientFlow(AbstractODE):
 
         self.dynamics.estimate_trace = estimate_trace
 
+    def forward(self, **kwargs):
+        """Integrate dynamics in the forward in time from $t \in [0, 1]$. """
+
+        # z=f(x), -log |det Jf|
+        x, log_det_jac_f = super().forward(**kwargs)
+
+        # compute the change in log density
+        # (Papamakarios, George, et al. "Normalizing Flows for Probabilistic Modeling and Inference." J. Mach. Learn. Res. 22.57 (2021): 1-64.)
+        # log px = log pz - log |det Jf|
+        #        => log pz + (-log |det Jf|)
+        d_log_p = log_det_jac_f
+
+        # concat output
+        return (x, d_log_p)
+
+    def inverse(self, **kwargs):
+
+        """Integrate dynamics in the backward in time from $t \in [1, 0]$. """
+
+        z, log_det_jac_f_inv = super().inverse(**kwargs)
+
+        # compute the change in log density
+        # (Papamakarios, George, et al. "Normalizing Flows for Probabilistic Modeling and Inference." J. Mach. Learn. Res. 22.57 (2021): 1-64.)
+        # log px = log pz + log |det Jf_inv|
+        #        => log pz - (-log |det Jf_inv|)
+        #        => log pz + div(Jf_inv)
+        d_log_p = -log_det_jac_f_inv
+
+        # concat output
+        return (z, d_log_p)
+
     def integrate(
         self,
         pos: Tensor,
@@ -159,7 +191,7 @@ class ContinuousAmbientFlow(AbstractODE):
                 f"and number of conditions {condition.shape[0]}.",
             )
 
-            condition = condition[batch]
+            #condition = condition[batch]
 
         dynamics = lambda t, x: self.dynamics.forward(
             t, x, condition, noise=epsilon, batch=batch

@@ -16,4 +16,5 @@ class InvertibleModule(Module):
     def freeze(self, freeze: bool) -> InvertibleModule:
         for parameter in self.parameters():
             parameter.requires_grad = not freeze
+
         return self

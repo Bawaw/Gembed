@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from .abstract_ode import AbstractODE
 from .linear_transformation import LinearTransformation
 from .continuous_ambient_flow import ContinuousAmbientFlow
 from .regularised_continuous_ambient_flow import RegularisedContinuousAmbientFlow
+from .regularised_continuous_manifold_flow import RegularisedContinuousManifoldFlow

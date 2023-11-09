@@ -166,7 +166,7 @@ class AugmentedRegularisedContinuousAmbientFlow(AbstractODE):
                 f"and number of conditions {condition.shape[0]}.",
             )
 
-            condition = condition[batch]
+            #condition = condition[batch]
 
         dynamics = lambda t, x: self.dynamics.forward(
             t, x, condition, noise=epsilon, batch=batch

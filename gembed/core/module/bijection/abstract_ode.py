@@ -60,9 +60,9 @@ class AbstractODE(InvertibleModule):
         z: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        time_steps: int = 11,
+        time_steps: int = 8,
         return_time_steps: bool = False,
-        **kwargs
+        **kwargs,
     ):
         """Integrate dynamics forward in time from $t \in [0, 1]$. This results in the ODE
 
@@ -83,7 +83,7 @@ class AbstractODE(InvertibleModule):
             batch=batch,
             condition=condition,
             return_time_steps=return_time_steps,
-            **kwargs
+            **kwargs,
         )
 
         return output
@@ -93,9 +93,9 @@ class AbstractODE(InvertibleModule):
         x: Tensor,
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
-        time_steps: int = 11,
+        time_steps: int = 8,
         return_time_steps: bool = False,
-        **kwargs
+        **kwargs,
     ):
 
         """Integrate dynamics in the backward in time from $t \in [1, 0]$. This results in the ODE
@@ -115,12 +115,11 @@ class AbstractODE(InvertibleModule):
             batch=batch,
             condition=condition,
             return_time_steps=return_time_steps,
-            **kwargs
+            **kwargs,
         )
 
         return output
 
-    @abstractmethod
     def integrate(
         self,
         pos: Tensor,
@@ -128,9 +127,35 @@ class AbstractODE(InvertibleModule):
         batch: Union[Tensor, None] = None,
         condition: Union[Tensor, None] = None,
         return_time_steps: bool = False,
-        **kwargs
+        adjoint_params=None,
+        **kwargs,
     ):
 
         """ Integrate dynamics. """
 
-        return NotImplemented
+        if condition is not None:
+            if batch is None:
+                batch = torch.zeros(pos.shape[0], dtype=torch.long).to(pos.device)
+
+            assert condition.shape[0] == batch.max() + 1, (
+                f"Mismatch between batch {batch.max()+1} ",
+                f"and number of conditions {condition.shape[0]}.",
+            )
+
+            # condition = condition[batch]
+
+        dynamics = lambda t, x: self.dynamics(t=t, x=x, c=condition, batch=batch)
+
+        if adjoint_params is not None:
+            params = adjoint_params
+        elif hasattr(self.dynamics, "parameters"):
+            params = self.dynamics.parameters()
+        else:
+            params = ()
+
+        pos = self.odeint(dynamics, pos, t_span, params)
+
+        if not return_time_steps:
+            return pos[-1]
+
+        return pos

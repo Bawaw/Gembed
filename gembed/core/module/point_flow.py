@@ -2,6 +2,7 @@ import torch
 import pytorch_lightning as pl
 from torch_scatter import scatter_mean, scatter_sum
 from pytorch_lightning.utilities import grad_norm
+import torch.nn as nn
 
 
 class PointFlow(pl.LightningModule):
@@ -336,7 +337,6 @@ class PointFlowSTN(PointFlow):
         return super().training_step(valid_batch, batch_idx)
 
     def configure_optimizers(self):
-        print("Warning lr = 1e-3")
         optimiser = torch.optim.Adam(self.parameters(), lr=1e-4)
 
         optim_dict = {"optimizer": optimiser}
@@ -366,6 +366,23 @@ class RegularisedPointFlowSTN(PointFlowSTN):
         self.lambda_e = lambda_e
         self.lambda_n = lambda_n
         self.lambda_m = lambda_m
+        self.refinement_network = nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())
+        from gembed.core.module.spectral import FourierFeatureMap
+
+        self.refinement_network = nn.Sequential(
+            FourierFeatureMap(3, 64, 1.0),
+            nn.Linear(64, 64),
+            # nn.Linear(3, 64),
+            nn.ELU(),
+            nn.Linear(64, 64),
+            nn.ELU(),
+            nn.Linear(64, 64),
+            nn.ELU(),
+            nn.Linear(64, 64),
+            nn.ELU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid(),
+        )
 
     def manifold_loss(self, decode, z, eta=0.2):
         # source: https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py#L396C1-L420C29
@@ -392,58 +409,17 @@ class RegularisedPointFlowSTN(PointFlowSTN):
         )
         return fm_loss.sum()
 
-    def _compute_loss_terms(self, x, batch):  # , data):
-
-        if self.stn is not None:
-            x = self.stn(x, batch)
-
-        n_samples_per_example = torch.bincount(batch)
-
-        condition = self.inverse(x, batch=batch)  # , data=data)
-
-        z, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
-            x,
-            batch=batch,
-            condition=condition,
-            return_combined_dynamics=True,
-        )
-
-        z[:, -1] = 0
-
-        x_rec, log_px, kinetic_energy, norm_jacobian = self.pdm.forward(
-            z,
-            batch=batch,
-            condition=condition,
-            return_combined_dynamics=True,
-        )
-
-        NLL = (x - x_rec).pow(2).sum(-1).mean()
-
-        KE, NJ, RDM = (
-            torch.zeros(1).to(x.device),
-            torch.zeros(1).to(x.device),
-            torch.zeros(1).to(x.device),
-        )
-
-        return NLL, KE, NJ, RDM
-
-    # def _compute_loss_terms(self, x, batch):  # , data):
+    # def compute_loss(self, train_batch, batch_idx, split, log=True):
+    #     x, batch = train_batch.pos, train_batch.batch
 
     #     if self.stn is not None:
     #         x = self.stn(x, batch)
 
-    #     n_samples_per_example = torch.bincount(batch)
+    #     # n_samples_per_example = torch.bincount(batch)
+    #     n_samples_per_example = 512
 
-    #     condition = self.inverse(x, batch=batch)  # , data=data)
-
-    #     # VAE
-    #     # mean = self.mean_layer(condition)
-    #     # log_var = self.logvar_layer(condition)
-
-    #     # condition = mean + torch.exp(0.5 * log_var) * torch.randn_like(mean)
-    #     # RDM = torch.mean(
-    #     #     -0.5 * torch.sum(1 + log_var - mean ** 2 - log_var.exp(), dim=1), dim=0
-    #     # )
+    #     condition = self.inverse(x, batch=batch)
+    #     # condition = torch.zeros(1, 64).to(x.device)
 
     #     # MAE
     #     if self.lambda_m == 0:
@@ -460,129 +436,155 @@ class RegularisedPointFlowSTN(PointFlowSTN):
     #             condition,
     #         )
 
+    #     # AF
+    #     x = x[:n_samples_per_example]
+    #     batch = batch[:n_samples_per_example]
     #     _, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
     #         x,
     #         batch=batch,
     #         condition=condition,
-    #         return_combined_dynamics=True,
+    #         include_combined_dynamics=True,
+    #         include_log_density=True,
     #     )
 
     #     log_px, kinetic_energy, norm_jacobian = scatter_sum(
     #         torch.stack([log_px, kinetic_energy, norm_jacobian], -1), batch, dim=0
     #     ).T
 
+    #     # AF AUG
+    #     # x_aug = (1 / 3) * torch.randn_like(x)
+    #     # _, log_px_aug, _, _ = self.pdm.inverse(
+    #     #     x_aug,
+    #     #     batch=batch,
+    #     #     condition=condition,
+    #     #     include_combined_dynamics=True,
+    #     #     include_log_density=True,
+    #     # )
+
+    #     # log_px_aug = scatter_sum(log_px_aug, batch, dim=0)
+    #     # NLL_aug = log_px_aug / n_samples_per_example
+    #     # NLL_aug = 1e-2 * (NLL_aug / x.shape[1])
+    #     # END AUG
+
     #     NLL = -(log_px / n_samples_per_example)
     #     KE = kinetic_energy / n_samples_per_example
     #     NJ = norm_jacobian / n_samples_per_example
 
-    #     return NLL, KE, NJ, RDM
+    #     NLL = NLL / x.shape[1]
+    #     KE = self.lambda_e * (KE / x.shape[1])
+    #     NJ = self.lambda_n * (NJ / x.shape[1])
+    #     RDM = self.lambda_m * RDM
 
-    # def _compute_loss_terms(self, x, batch):  # , data):
+    #     loss = NLL + KE + NJ + RDM  # + NLL_aug
 
-    #     if self.stn is not None:
-    #         x = self.stn(x, batch)
+    #     NLL, KE, NJ, loss = NLL.mean(), KE.mean(), NJ.mean(), loss.mean()
 
-    #     n_samples_per_example = torch.bincount(batch)
+    #     if log:
+    #         self.log(f"{split}_nll", NLL, batch_size=train_batch.num_graphs)
+    #         self.log(f"{split}_ke", KE, batch_size=train_batch.num_graphs)
+    #         self.log(f"{split}_nj", NJ, batch_size=train_batch.num_graphs)
+    #         self.log(f"{split}_loss", loss, batch_size=train_batch.num_graphs)
+    #         self.log(f"{split}_rdm", RDM, batch_size=train_batch.num_graphs)
+    #         # self.log(f"{split}_nll_aug", NLL_aug, batch_size=train_batch.num_graphs)
 
-    #     condition = self.inverse(x, batch=batch)  # , data=data)
+    #     return loss
 
-    #     NLL = condition.norm(dim=-1)
+    def compute_loss(self, train_batch, batch_idx, split, log=True):
 
-    #     KE, NJ, RDM = (
-    #         torch.zeros(1).to(x.device),
-    #         torch.zeros(1).to(x.device),
-    #         torch.zeros(1).to(x.device),
-    #     )
-
-    #     return NLL, KE, NJ, RDM
-
-    # FOR DEBUGGING
-    # def inverse(self, X, data, batch=None, apply_stn=False, return_params=False):
-    #     if hasattr(self, "Zs") and hasattr(data, "idx"):
-    #         if return_params:
-    #             return self.Zs(data.idx), None
-    #         else:
-    #             return self.Zs(data.idx)
-    #     else:
-    #         return PointFlowSTN.inverse(X, batch, apply_stn, return_params)
-
-    # def inverse(self, X, batch=None, apply_stn=False, return_params=False, data=None):
-    #     """
-    #     Compute the inverse of the shape distribution model for a given input and batch after optionally transforming the data to canonical coordinates using the Spatial Transformer Network (STN).
-
-    #     Args:
-    #         X (torch.Tensor): The input tensor.
-    #         batch (torch.Tensor): The batch tensor.
-    #         apply_stn (bool): Whether to apply the STN transformation. Default is False.
-
-    #     Returns:
-    #         torch.Tensor or Tuple[torch.Tensor, Any]: The inverse of the shape distribution model. If `apply_stn` is True, returns a tuple containing the inverse and the STN transformation parameters.
-
-    #     """
-    #     if data is not None and hasattr(self, "Zs") and hasattr(data, "idx"):
-    #         return self.Zs(data.idx)
-
-    #     if self.stn is not None and apply_stn:
-    #         X, params = self.stn(X, batch, return_params=True)
-
-    #     result = super().inverse(X=X, batch=batch)
-    #     result = self.mean_layer(result)
-
-    #     if return_params and apply_stn:
-    #         if self.stn is not None:
-    #             return result, params
-    #         else:
-    #             return result, None
-
-    #     return result
-
-    def on_before_optimizer_step(self, optimizer, X):
-        # Compute the 2-norm for each layer
-        # If using mixed precision, the gradients are already unscaled here
-        norms = grad_norm(self.pdm, norm_type=2)
-        self.log_dict(norms)
-
-    def training_step(self, train_batch, batch_idx):
         x, batch = train_batch.pos, train_batch.batch
 
-        # NLL, KE, NJ = self._compute_loss_terms(x, batch)
-        NLL, KE, NJ, RDM = self._compute_loss_terms(
-            x, batch=batch
-        )  # , data=train_batch)
+        if self.stn is not None:
+            x = self.stn(x, batch)
+
+        n_samples_per_example = torch.bincount(batch)
+        # n_samples_per_example = 512
+
+        condition = self.inverse(x, batch=batch)
+        # condition = torch.zeros(1, 64).to(x.device)
+
+        # MAE
+        if self.lambda_m == 0:
+            RDM = 0.0
+        else:
+            n_rdm_samples = 100
+            RDM = self.manifold_loss(
+                lambda c: self.pdm.forward(
+                    torch.randn(100, 3).to(x.device),
+                    batch=None,
+                    condition=c,
+                    return_combined_dynamics=False,
+                )[None],
+                condition,
+            )
+
+        # AF
+        #x = x[:n_samples_per_example]
+        #batch = batch[:n_samples_per_example]
+        z, log_px, kinetic_energy, norm_jacobian = self.pdm.inverse(
+            x,
+            batch=batch,
+            condition=condition,
+            include_combined_dynamics=True,
+            include_log_density=True,
+        )
+
+        # AF AUG
+        # x_aug = (1 / 3) * torch.randn_like(x)
+        # z_aug, log_px_aug, _, _ = self.pdm.inverse(
+        #     x_aug,
+        #     batch=batch,
+        #     condition=condition,
+        #     include_combined_dynamics=True,
+        #     include_log_density=True,
+        # )
+
+        # xs = torch.cat([log_px, log_px_aug], 0).unsqueeze(1)
+        # xs = torch.cat([z, z_aug], 0)
+        # ys = torch.cat(
+        #     [torch.ones_like(log_px), torch.zeros_like(log_px_aug)], 0
+        # ).unsqueeze(1)
+        # ys_pred = self.refinement_network(xs)
+
+        # BCE = nn.functional.binary_cross_entropy(ys_pred, ys)
+
+        # END AUG
+        log_px, kinetic_energy, norm_jacobian = scatter_sum(
+            torch.stack([log_px, kinetic_energy, norm_jacobian], -1), batch, dim=0
+        ).T
+
+        NLL = -(log_px / n_samples_per_example)
+        KE = kinetic_energy / n_samples_per_example
+        NJ = norm_jacobian / n_samples_per_example
 
         NLL = NLL / x.shape[1]
         KE = self.lambda_e * (KE / x.shape[1])
         NJ = self.lambda_n * (NJ / x.shape[1])
         RDM = self.lambda_m * RDM
 
-        loss = NLL + KE + NJ + RDM
+        loss = NLL + KE + NJ + RDM  # + BCE  # + NLL_aug
 
         NLL, KE, NJ, loss = NLL.mean(), KE.mean(), NJ.mean(), loss.mean()
 
-        self.log("train_nll", NLL, batch_size=train_batch.num_graphs)
-        self.log("train_ke", KE, batch_size=train_batch.num_graphs)
-        self.log("train_nj", NJ, batch_size=train_batch.num_graphs)
-        self.log("train_loss", loss, batch_size=train_batch.num_graphs)
-        self.log("train_rdm", RDM, batch_size=train_batch.num_graphs)
+        if log:
+            self.log(f"{split}_nll", NLL, batch_size=train_batch.num_graphs)
+            self.log(f"{split}_ke", KE, batch_size=train_batch.num_graphs)
+            self.log(f"{split}_nj", NJ, batch_size=train_batch.num_graphs)
+            self.log(f"{split}_loss", loss, batch_size=train_batch.num_graphs)
+            self.log(f"{split}_rdm", RDM, batch_size=train_batch.num_graphs)
+            #self.log(f"{split}_bce", BCE, batch_size=train_batch.num_graphs)
+            # self.log(f"{split}_nll_aug", NLL_aug, batch_size=train_batch.num_graphs)
 
         return loss
+
+    # def on_before_optimizer_step(self, optimizer, X):
+    #     # Compute the 2-norm for each layer
+    #     # If using mixed precision, the gradients are already unscaled here
+    #     norms = grad_norm(self.pdm, norm_type=2)
+    #     self.log_dict(norms)
+
+    def training_step(self, train_batch, batch_idx):
+        return self.compute_loss(train_batch, batch_idx, "train")
 
     # def validation_step(self, valid_batch, batch_idx):
     def validation_step(self, valid_batch, batch_idx):
-        x, batch = valid_batch.pos, valid_batch.batch
-        NLL, KE, NJ = self._compute_loss_terms(x, batch)
-
-        NLL = NLL / x.shape[1]
-        KE = self.lambda_e * (KE / x.shape[1])
-        NJ = self.lambda_n * (NJ / x.shape[1])
-
-        loss = NLL + KE + NJ
-
-        NLL, KE, NJ, loss = NLL.mean(), KE.mean(), NJ.mean(), loss.mean()
-
-        self.log("valid_nll", NLL, batch_size=valid_batch.num_graphs)
-        self.log("valid_ke", KE, batch_size=valid_batch.num_graphs)
-        self.log("valid_nj", NJ, batch_size=valid_batch.num_graphs)
-        self.log("valid_loss", loss, batch_size=valid_batch.num_graphs)
-
-        return loss
+        return self.compute_loss(train_batch, batch_idx, "valid")

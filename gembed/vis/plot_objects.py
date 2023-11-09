@@ -9,7 +9,6 @@ def plot_objects(
     camera_position=[(-5, -5, 0), (0, 0, 0), (0, 0, 1)],
     snapshot_file_name=None,
     show_grid=False,
-    theme="document",
     window_size=[1600, 2000],
     remove_scalar_bar=True,
     **kwargs
@@ -38,8 +37,6 @@ def plot_objects(
         - Each object in the args list is added to a separate subplot in the grid.
     """
 
-    pv.set_plot_theme(theme)
-
     n_objects = len(args)
     plotter = Plotter(
         shape=(1, n_objects),
@@ -53,10 +50,7 @@ def plot_objects(
     for i, (shape, scalars) in enumerate(args):
         plotter.subplot(0, i)
         plotter.add_generic(
-            shape,
-            scalars=scalars,
-            render_points_as_spheres=True,
-            **kwargs
+            shape, scalars=scalars, render_points_as_spheres=True, **kwargs
         )
         if show_grid:
             plotter.show_grid()

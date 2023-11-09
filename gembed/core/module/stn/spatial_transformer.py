@@ -2,21 +2,25 @@
 
 import torch
 import torch.nn as nn
+from gembed.nn.residual import ResidualCoefficient
+from gembed.core.module import InvertibleModule
 
 
-class SpatialTransformer(nn.Module):
+class SpatialTransformer(InvertibleModule):
     def __init__(self, nn, zero_initialise=False):
         super().__init__()
 
         # predictor
         self.nn = nn
 
+        # self.scaler = ResidualCoefficient()
+
         # set weights and bias of last layer to 0
-        if zero_initialise:
-            self.nn[-1].weight.data.zero_()
-            self.nn[-1].bias.data.copy_(
-                torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
-            )
+        # if zero_initialise:
+        #     self.nn[-1].weight.data.zero_()
+        #     self.nn[-1].bias.data.copy_(
+        #         torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float)
+        #     )
 
     def rotation_activation(self, theta, pos, batch):
         # θ ∈ [-π, π]
@@ -70,6 +74,7 @@ class SpatialTransformer(nn.Module):
             batch = torch.zeros(pos.shape[0], dtype=torch.long).to(pos.device)
 
         # get transformation
+        # return self.scaler(self.nn(pos, batch))
         return self.nn(pos, batch)
 
     def forward(self, pos, batch, params=None, return_params=False):
