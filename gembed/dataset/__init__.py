@@ -11,3 +11,4 @@ from .pittsburgh_dental_casts import (
     PittsburghDentalCasts,
     PittsburghDentalCastsCurvature,
 )
+from .datasets import load_dataset

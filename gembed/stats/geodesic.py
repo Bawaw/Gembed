@@ -47,10 +47,10 @@ def discrete_geodesic(
     assert (X0.shape[0] == 1) and (X1.shape[0] == 1)
     assert n_cps > 2, f"Expected atleast 3 control points but got {n_cps}."
 
-    # if not initial curve, use linear interpolation of points
+    # Note: we detach X0 and X1 here and create an seperate graph
     C0, C1 = X0.detach(), X1.detach()
 
-    # Note: we detach X0 and X1 here and create an seperate graph
+    # if not initial curve, use linear interpolation of points
     Cs = torch.concat(
         [
             torch.lerp(input=C0, end=C1, weight=t)
@@ -105,6 +105,7 @@ def discrete_geodesic(
         # final intermediate control points
         Cs = Cs.detach()
 
+    # Note: Reattach controlpoints to computational graph
     geodesic = torch.concat([X0, Cs, X1])
     energy = 0.5 * (f_local_metric(geodesic[:-1], geodesic[1:]) / delta_t).sum()
 

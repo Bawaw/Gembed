@@ -1,0 +1,14 @@
+{
+    "n_components": 512,
+    "fourier_feature_scale_x": 3.0,
+    "fourier_feature_scale_t": 30,
+    "use_stn": False,
+    "use_ltn": False,
+    "use_mtn": False,
+    "lambda_kld": 1e-8,
+    "sdm_n_hidden_layers": 10,
+    "sdm_hidden_dim": 128,
+    "pdm_n_hidden_layers": 20,
+    "pdm_hidden_dim": 128,
+    "pdm_hyper_hidden_dim": 128,
+}

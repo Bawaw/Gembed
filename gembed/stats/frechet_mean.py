@@ -13,7 +13,9 @@ def frechet_mean(
     init_mean=None,
     f_global_metric=lambda x, y: (x - y).pow(2).sum(-1),
     n_iters=int(1e4),
-    verbose=False
+    verbose=False,
+    patience = 20,
+    decimals = 6,
 ):
     r"""
     This function computes the Frechet mean of a set of data points Xs. The Fréchet mean represents a central or average point in the dataset by minimizing the average distance between the points and the mean.
@@ -33,14 +35,12 @@ def frechet_mean(
 
     """
 
-    # if not initial mean, use first datapoint
+    # if not initial mean, use mean datapoint
     if init_mean is None:
-        init_mean = Xs[0].clone()
+        init_mean = Xs.mean(0, keepdim=True)
 
     with torch.set_grad_enabled(True):
         # SETUP OPTIMISATION PARAMETERS
-        patience = 20
-        decimals = 6
         counter = 0
         min_dist = float("inf")
 

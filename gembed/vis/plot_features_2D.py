@@ -10,41 +10,46 @@ from umap import UMAP
 
 
 def plot_features_2D(
-    Zs, Z_colors=None, umap_kwargs={}, file_name=None, Z_trajs={}, **kwargs
+    Zs, Z_colors=None, umap_kwargs={}, file_name=None, Z_trajs={}, pca=True, umap=True, **kwargs
 ):
+
+    assert pca or umap, "Expect at least one to be true for feature representation; pca or umap."
+
+
+
+    latent_1 = []
+    latent_2 = []
+    method = []
+    colors = []
+
     # embed data using PCA
-    pca = PCA(n_components=2)
-    Z_pca = pca.fit_transform(Zs.clone())
+    if pca:
+        pca = PCA(n_components=2)
+        Z_pca = pca.fit_transform(Zs.clone())
+
+        latent_1.append(Z_pca[:, 0])
+        latent_2.append(Z_pca[:, 1])
+        method.append(["PCA"] * Zs.shape[0])
+        if Z_colors is not None:
+            colors.append(Z_collors)
 
     # embed data using UMAP
-    umap = UMAP(n_components=2, random_state=42, **umap_kwargs)
-    Z_umap = umap.fit_transform(Zs.clone())
+    if umap:
+        umap = UMAP(n_components=2, random_state=42, **umap_kwargs)
+        Z_umap = umap.fit_transform(Zs.clone())
+
+        latent_1.append(Z_umap[:, 0])
+        latent_2.append(Z_umap[:, 1])
+        method.append(["UMAP"] * Zs.shape[0])
+        if Z_colors is not None:
+            colors.append(Z_colors)
 
     data = {
-        "latent_1": np.concatenate(
-            [
-                Z_pca[:, 0],
-                Z_umap[:, 0],
-            ]
-        ),
-        "latent_2": np.concatenate(
-            [
-                Z_pca[:, 1],
-                Z_umap[:, 1],
-            ]
-        ),
-        "Method": np.concatenate(
-            [
-                ["PCA"] * Zs.shape[0],
-                ["UMAP"] * Zs.shape[0],
-            ]
-        ),
+        "latent_1": np.concatenate(latent_1),
+        "latent_2": np.concatenate(latent_2),
+        "Method": np.concatenate(method),
+        "hue" : colors if colors != [] else None
     }
-
-    if Z_colors is not None:
-        data["hue"] = torch.cat([Z_colors, Z_colors])
-    else:
-        data["hue"] = None
 
     # fix order of hue and style
     fig = sns.relplot(
@@ -57,36 +62,47 @@ def plot_features_2D(
         **kwargs
     )
     colors = sns.color_palette()
+
+    # plot interpolation trajectories
     for i, k in enumerate(Z_trajs.keys()):
-        Z_traj_pca = pca.transform(Z_trajs[k].clone())
+        if pca:
+            Z_traj_pca = pca.transform(Z_trajs[k].clone())
+
+            fig.axes[0][0].plot(
+                Z_traj_pca[:, 0], Z_traj_pca[:, 1], marker="o", label=k, color=colors[i + 1]
+            )
+            fig.axes[0][0].scatter(
+                Z_traj_pca[[0, -1], 0], Z_traj_pca[[0, -1], 1]
+            )  # start and endpoint
+
+            fig.axes[0][0].legend()
 
         # umap transform is stochastic, running one element at a time reduces this
         # https://github.com/lmcinnes/umap/issues/566
-        Z_traj_umap = torch.concat(
-            [torch.from_numpy(umap.transform(Z[None])) for Z in Z_trajs[k].clone()]
-        )
+        if umap:
+            # TODO: support just umap only feature plots
+            assert umap and not pca, "UMAP only feature plot not supported."
+            Z_traj_umap = torch.concat(
+                [torch.from_numpy(umap.transform(Z[None])) for Z in Z_trajs[k].clone()]
+            )
 
-        fig.axes[0][0].plot(
-            Z_traj_pca[:, 0], Z_traj_pca[:, 1], marker="o", label=k, color=colors[i + 1]
-        )
-        fig.axes[0][0].scatter(
-            Z_traj_pca[[0, -1], 0], Z_traj_pca[[0, -1], 1]
-        )  # start and endpoint
-        fig.axes[0][0].legend()
-        fig.axes[0][1].plot(
-            Z_traj_umap[:, 0],
-            Z_traj_umap[:, 1],
-            marker="o",
-            label=k,
-            color=colors[i + 1],
-        )
-        fig.axes[0][1].scatter(
-            Z_traj_umap[[0, -1], 0], Z_traj_umap[[0, -1], 1]
-        )  # start and endpoint
-        fig.axes[0][1].legend()
+            fig.axes[0][1].plot(
+                Z_traj_umap[:, 0],
+                Z_traj_umap[:, 1],
+                marker="o",
+                label=k,
+                color=colors[i + 1],
+            )
+            fig.axes[0][1].scatter(
+                Z_traj_umap[[0, -1], 0], Z_traj_umap[[0, -1], 1]
+            )  # start and endpoint
+
+            fig.axes[0][1].legend()
+
 
     if file_name is not None:
-        fig.savefig(file_name, bbox_inches="tight")
+        fig.savefig(file_name, bbox_inches="tight", dpi=300)
+
     plt.show()
 
     return fig

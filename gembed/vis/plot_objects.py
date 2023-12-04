@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import pyvista as pv
 from gembed.vis.plotter import Plotter
 
@@ -63,7 +64,10 @@ def plot_objects(
         plotter.remove_scalar_bar()
 
     if snapshot_file_name is not None:
-        plotter.screenshot(snapshot_file_name, transparent_background=True)
+        if os.path.splitext(snapshot_file_name)[1] == ".svg":
+            plotter.save_graphic(snapshot_file_name)
+        else:
+            plotter.screenshot(snapshot_file_name, transparent_background=True)
     else:
         plotter.show()
 

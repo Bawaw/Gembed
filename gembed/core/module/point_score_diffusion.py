@@ -13,135 +13,7 @@ class Phase(Enum):
     TRAIN_METRIC_TRANSFORMER = 3
     EVAL = 4
 
-
-# class PointScoreDiffusion(pl.LightningModule):
-#     """
-#     PointFlow is a PyTorch Lightning module that models a distribution using a shape distribution model (SDM)
-#     and a point distribution model (PDM).
-
-#     Args:
-#         sdm: The shape distribution model.
-#         pdm: The point distribution model.
-#     """
-
-#     def __init__(self, sdm, pdm):
-#         super().__init__()
-
-#         self.sdm = sdm
-#         self.pdm = pdm
-
-#     def pdm_inverse(self, **kwargs):
-#         """
-#         Compute the inverse of the point distribution model.
-#         $$
-#           f: x \rightarrow z
-#         $$
-
-#         Returns:
-#             torch.Tensor: The inverse of the point distribution model.
-#         """
-
-#         return self.pdm.inverse(**kwargs)
-
-#     def pdm_forward(self, **kwargs):
-#         """
-#         Compute the forward pass of the point distribution model.
-#         $$
-#           f: z \rightarrow x
-#         $$
-
-#         Returns:
-#             torch.Tensor: The output of the point distribution model.
-
-#         """
-#         return self.pdm.forward(**kwargs)
-
-#     def inverse(self, X, batch):
-#         """
-#         Compute the inverse of the shape distribution model for a given input and batch.
-#         $$
-#           f: X \rightarrow Z
-#         $$
-
-#         Args:
-#             X (torch.Tensor): The input tensor.
-#             batch (torch.Tensor): The batch tensor.
-
-#         Returns:
-#             torch.Tensor: The inverse of the shape distribution model.
-
-#         """
-#         condition = self.sdm.inverse(X, batch)
-#         return condition
-
-#     def log_prob(self, x, batch, condition=None):
-#         """
-#         Compute the log probability of the input `x` conditioned on the `condition`.
-#         $$
-#           p(x|condition)
-#         $$
-
-#         Args:
-#             x (torch.Tensor): The input tensor.
-#             batch (torch.Tensor): The batch tensor.
-#             condition (Optional[torch.Tensor]): The condition tensor. Default is None.
-
-#         Returns:
-#             torch.Tensor: The log probability of the input.
-
-#         """
-#         if condition is None:
-#             condition = self.inverse(x, batch)
-
-#         log_px = self.pdm.log_prob(x, batch, condition=condition)
-
-#         return log_px
-
-#     def log_prob_grad(self, x, batch, condition=None):
-#         """
-#         Compute the gradient of the log probability with respect to the input `x` under the condition `condition`.
-#         $$
-#           \nabla p(x|condition)
-#         $$
-
-#         Args:
-#             x (torch.Tensor): The input tensor.
-#             batch (torch.Tensor): The batch tensor.
-#             condition (Optional[torch.Tensor]): The condition tensor. Default is None.
-
-#         Returns:
-#             torch.Tensor: The gradient of the log probability with respect to `x`.
-
-#         """
-
-#         with torch.set_grad_enabled(True):
-#             x = x.requires_grad_(True)
-#             log_px = self.log_prob(x, batch, condition)
-
-#             # TODO: check that log_px is indeed a scalar
-#             nabla_log_px = torch.autograd.grad(log_px.sum(), x, create_graph=True)[0]
-
-#         return nabla_log_px
-
-#     def log_likelihood(self, x, batch, **kwargs):
-#         """
-#         Compute the log likelihood of the data.
-
-#         Args:
-#             x (torch.Tensor): The input tensor.
-#             batch (torch.Tensor): The batch tensor.
-
-#         Returns:
-#             torch.Tensor: The log likelihood of the data.
-
-#         """
-
-#         log_px = self.log_prob(x, batch, **kwargs)
-#         ll = scatter_mean(log_px, batch)
-#         return ll
-
-
-class PointScoreDiffusionSTN(pl.LightningModule):
+class PointScoreDiffusion(pl.LightningModule):
     """
     PointFlowSTN is a subclass of PointFlow that incorporates a Spatial Transformer Network (STN) into the model.
 
@@ -216,7 +88,7 @@ class PointScoreDiffusionSTN(pl.LightningModule):
         return x
 
     def inverse(
-        self, X, batch=None, apply_stn=False, return_params=False, apply_ltn=False
+            self, X, batch=None, apply_stn=False, return_params=False, apply_ltn=False, apply_mtn=False,
     ):
         """
         Compute the inverse of the shape distribution model for a given input and batch after optionally transforming the data to canonical coordinates using the Spatial Transformer Network (STN).
@@ -230,6 +102,7 @@ class PointScoreDiffusionSTN(pl.LightningModule):
             torch.Tensor or Tuple[torch.Tensor, Any]: The inverse of the shape distribution model. If `apply_stn` is True, returns a tuple containing the inverse and the STN transformation parameters.
 
         """
+        assert not (apply_mtn and apply_ltn), "Can not apply both ltn and mtn to same data."
 
         if self.stn is not None and apply_stn:
             X, params = self.stn(X, batch, return_params=True)
@@ -238,6 +111,9 @@ class PointScoreDiffusionSTN(pl.LightningModule):
 
         if self.ltn is not None and apply_ltn:
             Z = self.ltn.inverse(x=Z, batch=torch.arange(Z.shape[0]))
+        elif self.mtn is not None and apply_mtn:
+            Z = self.mtn.inverse(X=Z)
+
 
         if return_params and apply_stn:
             if self.stn is not None:
@@ -254,10 +130,13 @@ class PointScoreDiffusionSTN(pl.LightningModule):
         apply_stn=False,
         apply_pdm=False,
         apply_ltn=False,
+        apply_mtn=False,
         stn_params=None,
         n_samples=int(8e4),
         **kwargs,
     ):
+        assert not (apply_mtn and apply_ltn), "Can not apply both ltn and mtn to same data."
+
         if batch is not None:
             n_batch = batch.max() + 1
         else:
@@ -265,6 +144,8 @@ class PointScoreDiffusionSTN(pl.LightningModule):
 
         if self.ltn is not None and apply_ltn:
             Z = self.ltn.forward(z=Z, batch=torch.arange(Z.shape[0]))
+        elif self.mtn is not None and apply_mtn:
+            Z = self.mtn.forward(Z=Z)
 
         if not apply_pdm:
             return Z
@@ -408,8 +289,6 @@ class PointScoreDiffusionSTN(pl.LightningModule):
                 lr=1e-3,
                 weight_decay=0.0,
             )
-        elif self.phase == Phase.TRAIN_METRIC_TRANSFORMER:
-            optimiser = torch.optim.Adam(self.parameters(), lr=1e-4)
         else:
             optimiser = torch.optim.Adam(self.parameters(), lr=1e-3)
 
@@ -497,52 +376,24 @@ class PointScoreDiffusionSTN(pl.LightningModule):
 
         return loss
 
-    def _latent_metric_loss_discrete(self, func, z, eta=0.2):
-        bs = z.size(0)
-        z_dim = z.size(1)
-
-        # α ∈ [-η, +η]
-        # z_permuted = z[[1, 0]]
-        # alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
-        # Z_augmented = alpha * z + (1 - alpha) * z_permuted
-        Z_augmented = z
-
-        # Synthesise shapes
-        Xs = func(Z_augmented)
-
-        # minimises distance between shapes
-        loss = (Xs[:-1] - Xs[1:]).pow(2).mean([1, 2]).mean()
-
-        # from gembed.vis import plot_objects
-
-        # plot_objects(
-        #     (Xs[0].cpu(), None),
-        #     (Xs[1].cpu(), None),
-        # )
-
-        return loss.mean()
-
-    def _latent_metric_loss_continuous(self, func, z, eta=0.2, augment_z=True):
+    def _latent_metric_loss(self, func, z, eta=0.2, augment_z=True):
         # source: https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py#L396C1-L420C29
 
         bs = z.size(0)
         z_dim = z.size(1)
 
-        # augment
         if augment_z:
+            # interpolation based latent augmentation Note: requires
+            assert bs > 1, "can not use Z augmentation if bs < 2"
             z_permuted = z[torch.randperm(bs)]
             alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
             z_augmented = alpha * z + (1 - alpha) * z_permuted
+
         else:
             z_augmented = z
 
         # loss
         v = torch.randn(bs, z_dim).to(z_augmented)
-        # v = (
-        #     torch.from_numpy(np.random.RandomState(42).randn(bs, z_dim))
-        #     .float()
-        #     .to(z.device)
-        # )
 
         X, Jv = torch.autograd.functional.jvp(
             func, z_augmented, v=v, create_graph=True
@@ -550,170 +401,44 @@ class PointScoreDiffusionSTN(pl.LightningModule):
 
         Jv_sq_norm = torch.einsum("nij,nij->n", Jv, Jv)
         c = Jv_sq_norm.mean() / z_dim
-        # c = self.mtn.constant
-        # c = 1
 
         # vTG(z)v - vTv c
         fm_loss = (Jv_sq_norm - (torch.sum(v ** 2, dim=1) * c)).pow(2)
 
         return fm_loss.mean()
 
-    def _latent_metric_loss_exact(self, func, z, eta=0.2):
-        # source: https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py#L396C1-L420C29
-
+    def _latent_metric_loss2(self, func, z, eta=0.2, augment_z=True):
         bs = z.size(0)
         z_dim = z.size(1)
-        foo = lambda z: func(z[None]).view(-1)
 
-        c = self.mtn.constant
+        if augment_z:
+            # interpolation based latent augmentation Note: requires
+            assert bs > 1, "can not use Z augmentation if bs < 2"
+            z_permuted = z[torch.randperm(bs)]
+            alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
+            z_augmented = alpha * z + (1 - alpha) * z_permuted
 
-        J = torch.autograd.functional.jacobian(foo, z[0], strict=True)
-        JTJ = torch.einsum("nij,nik->njk", J[None], J[None])
-
-        loss = (JTJ - c * torch.eye(z_dim).to(z)).norm(dim=[1, 2], p="fro")
-
-        return loss.mean()
-
-    # def _latent_metric_loss(self, decode, z, eta=0.2):
-    #     # source: https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py#L396C1-L420C29
-
-    #     bs = z.size(0)
-    #     z_dim = z.size(1)
-
-    #     # augment
-    #     z_permuted = z[torch.randperm(bs)]
-    #     alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
-    #     z_augmented = alpha * z + (1 - alpha) * z_permuted
-
-    #     # loss
-    #     v = torch.randn(bs, z_dim).to(z_augmented)
-
-    #     X, Jv = torch.autograd.functional.jvp(
-    #         decode, z_augmented, v=v, create_graph=True
-    #     )  # bs num_pts 3
-
-    #     Jv_sq_norm = torch.einsum("nij,nij->n", Jv, Jv)
-    #     TrG = Jv_sq_norm.mean()
-
-    #     # vTG(z)v - vTv c
-    #     fm_loss = (Jv_sq_norm - (torch.sum(v ** 2, dim=1) * (TrG / z_dim))).pow(2)
-
-    #     fm_loss = fm_loss.clamp(max=1)
-
-    #     return fm_loss.mean()
-
-    def _latent_metric_loss_continuous_rdm(self, func, z, eta=0.2, create_graph=True):
-        """
-        func: decoder that maps "latent value z" to "data", where z.size() == (batch_size, latent_dim)
-        """
-        bs = len(z)
-        # z_perm = z[torch.randperm(bs)]
-        z_perm = z[[1, 0]]
-        alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
-        z_augmented = alpha * z + (1 - alpha) * z_perm
-        v = torch.randn(z.size()).to(z)
-        Jv = torch.autograd.functional.jvp(
-            func, z_augmented, v=v, create_graph=create_graph
-        )[1]
-        TrG = torch.sum(Jv.view(bs, -1) ** 2, dim=1).mean()
-        JTJv = (
-            torch.autograd.functional.vjp(
-                func, z_augmented, v=Jv, create_graph=create_graph
-            )[1]
-        ).view(bs, -1)
-        TrG2 = torch.sum(JTJv ** 2, dim=1).mean()
-        return TrG2 / TrG ** 2
-
-    def _latent_metric_loss(self, decode, Zs):
-        # source: https://github.com/seungyeon-k/SMF-public/blob/e0a53e3b9ba48f4af091e6f11295c282cf535051/models/base_arch.py#L396C1-L420C29
-
-        bs = Zs.size(0)
-        Zs_dim = Zs.size(1)
+        else:
+            z_augmented = z
 
         # loss
-        v = torch.randn(bs, Zs_dim).to(Zs)
-        # Zs = Zs.repeat(100, 1)
-        # v = (
-        #     torch.from_numpy(np.random.RandomState(42).randn(bs, Zs_dim))
-        #     .float()
-        #     .to(Zs.device)
-        # )
+        v = torch.randn(bs, z_dim).to(z_augmented)
 
-        # X, Jv = torch.autograd.functional.jvp(
-        #     decode, Zs, v=v, create_graph=True
-        # )  # bs num_pts 3
+        Jv = torch.autograd.functional.jvp(
+                func, z_augmented, v=v, create_graph=True)[1]
+        TrG = torch.sum(Jv.view(bs, -1)**2, dim=1).mean()
 
-        # Jv_sq_norm = torch.einsum("nij,nij->n", Jv, Jv)
-        # TrG = Jv_sq_norm.mean()
-        #
-        # loss = (
-        #     (torch.sum(v ** 2, dim=1)) -
-        #     (decode(Zs) - decode(Zs+v)).pow(2).sum(-1)
-        # ).pow(2)
+        JTJv = (torch.autograd.functional.vjp(
+            func, z_augmented, v=Jv, create_graph=True)[1]).view(bs, -1)
+        TrG2 = torch.sum(JTJv**2, dim=1).mean()
 
-        # vTG(Zs)v - vTv c
-        # c = self.mtn.constant(Zs)
-        # c = Jv_sq_norm.mean()/Zs_dim
-        # loss = (Jv_sq_norm - (c * torch.sum(v ** 2, dim=1))).pow(2)
-        # loss = (Jv_sq_norm - (c * torch.sum(v ** 2, dim=1))).pow(2)
+        return TrG2/TrG**2
 
-        # from gembed.vis import plot_objects
-        # Xs = decode(Zs)
-        # plot_objects((Xs[0].cpu(), None))
-
-        Xs = decode(Zs)
-        loss = (Xs[:-1] - Xs[1:]).pow(2).mean([1, 2])
-
-        return loss
-
-    # def latent_metric_loss(self, train_batch, batch_idx):
-    #     x, batch = train_batch.pos, train_batch.batch
-
-    #     # TODO: this is not the correct way to do it
-    #     # self.stn.eval()
-    #     self.sdm.eval()
-    #     self.pdm.eval()
-    #     self.ltn.eval()
-
-    #     if self.stn is not None:
-    #         x = self.stn(x, batch)
-
-    #     if self.lambda_kld > 0:
-    #         C_mean, C_log_var = self.sdm.get_params(x, batch=batch)
-    #         C_std = torch.exp(0.5 * C_log_var)
-    #         C = C_mean + C_std * torch.randn_like(C_mean)
-    #     else:
-    #         C = self.sdm.inverse(x, batch)
-
-    #     Z_metric = self.mtn.inverse(C)
-    #     # C_rec = self.mtn.forward(z)
-
-    #     # t ~ U(0, 1)
-    #     t = torch.rand((batch.max() + 1, 1), device=x.device).to(x.device)
-    #     mean, std = self.pdm.marginal_prob_params(x, t, batch, C)
-
-    #     # \tilde{x} ~ p_t(x)
-    #     eps = torch.randn_like(x)
-    #     x_tilde = mean + std * eps
-
-    #     func = lambda condition: self.pdm.inverse_drift_coefficient(
-    #         x_tilde, t, batch, self.mtn.forward(condition)
-    #     ).view(batch.max() + 1, -1, 3)
-
-    #     # loss = self._latent_metric_loss_discrete(func, Z_metric)
-    #     # loss = self._latent_metric_loss_exact(func, Z_metric)
-    #     loss = self._latent_metric_loss_continuous(func, Z_metric)
-    #     # loss = self._latent_metric_loss_continuous_rdm(func, Z_metric)
-    #     return loss.mean()
-
-    #     # C_rec = self.mtn.forward(Z_metric)
-    #     # rec = (C - C_rec).pow(2).mean(-1)
-    #     # return rec.mean() + loss.mean()
-
-    def latent_metric_loss(self, train_batch, batch_idx):
+    def latent_metric_loss(self, train_batch, batch_idx, n_samples=100, lambda_reg=1):
+        # TODO: batch this
         x, batch = train_batch.pos, train_batch.batch
 
-        # TODO: this is not the correct way to do it
+        # TODO: this is not the correct way to do it but we need to freeze batchnorm layers
         # self.stn.eval()
         self.sdm.eval()
         self.pdm.eval()
@@ -731,41 +456,43 @@ class PointScoreDiffusionSTN(pl.LightningModule):
 
         Z_metric = self.mtn.inverse(C, time_steps=5)
 
-        # z_template = 0.8 * torch.randn(1000, 3).repeat(batch.max() + 1, 1).to(x)
+        # REC LOSS
+        C_rec = self.mtn.forward(Z_metric, time_steps=5)
+        rec_loss = (C - C_rec).pow(2).mean(-1)
+        rec_loss = rec_loss.mean()
+
+        # METRIC LOSS
         z_template = 0.8 * torch.randn(
-            100, 3, generator=torch.Generator().manual_seed(42)
-        ).repeat(batch.max() + 1, 1).to(x)
+            n_samples, 3, generator=torch.Generator().manual_seed(42)
+        ).repeat(batch.max()+1, 1).to(x)
+
         batch = (
-            torch.concat([i * torch.ones(100) for i in range(batch.max() + 1)])
+            torch.concat([i * torch.ones(n_samples) for i in range(batch.max()+1)])
             .to(x)
             .long()
         )
 
-        func = lambda z: self.forward(
-            self.mtn.forward(z, time_steps=5),
+        shape_generator = lambda z: self.forward(
+            Z = self.mtn.forward(z),
             apply_pdm=True,
             time_steps=6,
             z=z_template,
             batch=batch,
         )[1].view(z.shape[0], -1, 3)
 
-        # loss = self._latent_metric_loss_discrete(func, Z_metric)
-        # loss = self._latent_metric_loss_exact(func, Z_metric)
-        loss = self._latent_metric_loss_continuous(func, Z_metric, augment_z=False)
-        # loss = self._latent_metric_loss_continuous_rdm(func, Z_metric)
-        # return loss.mean()
+        # metric_loss = self._latent_metric_loss(shape_generator, Z_metric, augment_z=False)
+        metric_loss = 1e-1 * self._latent_metric_loss2(shape_generator, Z_metric, augment_z=True)
+        metric_loss = lambda_reg * metric_loss.mean()
 
-        C_rec = self.mtn.forward(Z_metric, time_steps=5)
-        rec = (C - C_rec).pow(2).mean(-1)
+        # TOTAL LOSS
+        loss = rec_loss + metric_loss
 
-        REC = rec.mean()
-        REG = loss.mean()
+        return loss, rec_loss, metric_loss
 
-        lambda_reg = int(1e4)
-        return REC + lambda_reg*REG, REC, lambda_reg*REG
-
-    def latent_metric_validation_loss(self, train_batch, batch_idx):
+    def latent_metric_validation_loss(self, train_batch, batch_idx, n_cps=6):
         x, batch = train_batch.pos, train_batch.batch
+
+        assert batch.max() == 1, "TODO: Batch this function."
 
         # TODO: this is not the correct way to do it
         # self.stn.eval()
@@ -776,11 +503,6 @@ class PointScoreDiffusionSTN(pl.LightningModule):
         if self.stn is not None:
             x = self.stn(x, batch)
 
-            # if self.lambda_kld > 0:
-            #     C_mean, C_log_var = self.sdm.get_params(x, batch=batch)
-            #     C_std = torch.exp(0.5 * C_log_var)
-            #     C = C_mean + C_std * torch.randn_like(C_mean)
-            # else:
         with torch.no_grad():
             C = self.sdm.inverse(x, batch)
 
@@ -792,22 +514,28 @@ class PointScoreDiffusionSTN(pl.LightningModule):
                 weight=torch.linspace(0, 1, 6)[:, None].to(x.device),
             )
 
-            z_template = 0.8 * torch.randn(8000, 3).repeat(6, 1).to(x)
-            batch = torch.concat([i * torch.ones(8000) for i in range(6)]).to(x).long()
+            C_interp = self.mtn.forward(Z_metric)
+            reconstruction_error = (C - C_interp[[0, -1]]).pow(2).mean(-1)
+
+            # replace start and end point by known point
+            C_interp = torch.concat([C[:1], C_interp[1:-1], C[1:]])
+
+            z_template = 0.8 * torch.randn(8000, 3).repeat(n_cps, 1).to(x)
+            batch = torch.concat([i * torch.ones(8000) for i in range(n_cps)]).to(x).long()
 
             Xs = self.forward(
-                self.mtn.forward(Z_metric),
+                Z=C_interp,
                 apply_pdm=True,
                 time_steps=10,
                 n_samples=8000,  # 8000
                 z=z_template,
                 batch=batch,
-            )[1].view(6, -1, 3)
+            )[1].view(n_cps, -1, 3)
 
-            loss = (Xs[:-1] - Xs[1:]).pow(2).sum([1, 2])
+            delta_t = 1 / (n_cps - 1)
+            geodesic_energy = 0.5*(Xs[:-1] - Xs[1:]).pow(2).sum(-1).mean(-1).div(delta_t).sum()
 
             # from gembed.vis import plot_objects
-
             # plot_objects(
             #     (Xs[0].cpu(), None),
             #     (Xs[1].cpu(), None),
@@ -817,7 +545,7 @@ class PointScoreDiffusionSTN(pl.LightningModule):
             #     (Xs[5].cpu(), None),
             # )
 
-        return loss
+        return geodesic_energy, reconstruction_error
 
     def training_step(self, train_batch, batch_idx):
         if self.phase == Phase.TRAIN_POINT_DIFFUSION:
@@ -847,8 +575,15 @@ class PointScoreDiffusionSTN(pl.LightningModule):
             with torch.no_grad():
                 ll = self.log_likelihood(x, batch, time_steps=10, apply_stn=True)
 
-            self.log("valid_ll", ll.mean(), batch_size=valid_batch.num_graphs)
+            self.log("valid_point_ll", ll.mean(), batch_size=valid_batch.num_graphs)
+
+        elif self.phase == Phase.TRAIN_LATENT_DIFFUSION:
+            # TODO:
+            return None
+            # loss = self.latent_diffusion_loss(train_batch, batch_idx)
+            # self.log("train_latent_ll", loss, batch_size=train_batch.num_graphs)
 
         elif self.phase == Phase.TRAIN_METRIC_TRANSFORMER:
-            ml = self.latent_metric_validation_loss(valid_batch, batch_idx)
-            self.log("valid_metric_loss", ml.mean(), batch_size=valid_batch.num_graphs)
+            ge, re = self.latent_metric_validation_loss(valid_batch, batch_idx)
+            self.log("valid_metric_geodesic", ge.mean(), batch_size=valid_batch.num_graphs)
+            self.log("valid_metric_reconstruction", re.mean(), batch_size=valid_batch.num_graphs)
