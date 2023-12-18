@@ -3,12 +3,12 @@
 import os
 import torch
 import pandas as pd
-import pytorch_lightning as pl
+import lightning as pl
 import torch_geometric.transforms as tgt
 
 from gembed.vis import Plotter
 from helper import load_experiment, pathcat, PYVISTA_SAVE_KWARGS, PYVISTA_PLOT_KWARGS
-from gembed.transforms import RandomRotation, RandomTranslation
+from gembed.utils.transforms import RandomRotation, RandomTranslation
 
 def _plot(data_set, file_name):
     os.makedirs(file_path, exist_ok=True)

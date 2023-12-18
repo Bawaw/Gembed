@@ -2,7 +2,7 @@
 
 import os
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import torch_geometric.transforms as tgt
 
 from gembed.vis import plot_objects
@@ -97,5 +97,6 @@ if __name__ == "__main__":
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
-    for i in range(1, 11):
-        main(model, T_sample, f_refine, train, pc=i, device=device, file_path=pathcat(file_path, "train"))
+    with torch.no_grad():
+        for i in range(1, 11):
+            main(model, T_sample, f_refine, train, pc=i, device=device, file_path=pathcat(file_path, "train"))

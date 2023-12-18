@@ -21,7 +21,7 @@ class BinaryMask2Surface(BaseTransform):
 
         mask = data["vol"]
 
-        grid = pv.UniformGrid()
+        grid = pv.ImageData()
         # note that sitk.mask.GetSize() != np.mask.shape
         grid.dimensions = mask.GetSize()[::-1]
         grid.origin = mask.GetOrigin()[::-1]

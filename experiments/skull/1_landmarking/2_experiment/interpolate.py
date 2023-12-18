@@ -8,9 +8,9 @@ import torch_geometric.transforms as tgt
 from gembed.stats.geodesic import discrete_geodesic, continuous_geodesic
 from gembed.vis.plotter import Plotter
 from gembed.vis import plot_objects
-from transform import SubsetSample
+from gembed.utils.transforms import SubsetSample
 from torch_scatter import scatter_mean
-import pytorch_lightning as pl
+import lightning as pl
 from gembed.vis import plot_features_2D
 
 
@@ -94,15 +94,15 @@ def linear_latent_interpolation(
     Zs = discrete_geodesic(Z0, Z1, n_iters=0, n_cps=n_geodesic_cps)
 
     # convert representations to shapes
-    Xs = torch.stack(
-        [
-            refine(model, model.forward(Z, z=z_template, apply_ltn=False, apply_pdm=True)[1], Z, n_refinement_steps)
-            for Z in Zs.unsqueeze(1)
-        ]
-    )
+    # Xs = torch.stack(
+    #     [
+    #         refine(model, model.forward(Z, z=z_template, apply_ltn=False, apply_pdm=True)[1], Z, n_refinement_steps)
+    #         for Z in Zs.unsqueeze(1)
+    #     ]
+    # )
 
-    # plot the shapes
-    plot_shapes(Xs, snapshot_root)
+    # # plot the shapes
+    # plot_shapes(Xs, snapshot_root)
 
     return Zs.cpu()
 
@@ -120,19 +120,19 @@ def linear_metric_space_interpolation(
 
     Zs = model.mtn.forward(Zs_metric)
 
-    if keep_start_end:
-        Zs[0], Zs[-1] = Z0, Z1
+    # if keep_start_end:
+    #     Zs[0], Zs[-1] = Z0, Z1
 
     # convert representations to shapes
-    Xs = torch.stack(
-        [
-            refine(model, model.forward(Z, z=z_template, apply_ltn=False, apply_pdm=True)[1], Z, n_refinement_steps)
-            for Z in Zs.unsqueeze(1)
-        ]
-    )
+    # Xs = torch.stack(
+    #     [
+    #         refine(model, model.forward(Z, z=z_template, apply_ltn=False, apply_pdm=True)[1], Z, n_refinement_steps)
+    #         for Z in Zs.unsqueeze(1)
+    #     ]
+    # )
 
-    # # plot the shapes
-    plot_shapes(Xs, snapshot_root)
+    # # # plot the shapes
+    # plot_shapes(Xs, snapshot_root)
 
     return Zs.cpu()
 
@@ -403,6 +403,7 @@ def interpolate(
     X0 = X0.to(device)
     X1 = X1.to(device)
     model = model.to(device)
+
     # embed shapes
     Z0, params0 = model.inverse(
         T(X0.clone()).pos, None, apply_stn=True, return_params=True, apply_ltn=False
@@ -435,11 +436,11 @@ def interpolate(
         model, Z0, Z1, z_template, n_geodesic_cps, snapshot_root, n_refinement_steps
     )
 
-    # Zs_trajs[
-    #     "Riemannian Interpolation Discrete"
-    # ] = riemannian_latent_interpolation_discrete(
-    #     model, Z0, Z1, z_template, n_geodesic_cps, snapshot_root, n_refinement_steps, **riemannian_kwargs
-    # )
+    Zs_trajs[
+        "Riemannian Interpolation Discrete"
+    ] = riemannian_latent_interpolation_discrete(
+        model, Z0, Z1, z_template, n_geodesic_cps, snapshot_root, n_refinement_steps, **riemannian_kwargs
+    )
     # Zs_trajs[
     #     "Riemannian Interpolation Continuous"
     # ] = riemannian_latent_interpolation_continuous(

@@ -3,12 +3,12 @@
 import os
 
 
-import pytorch_lightning as pl
+from gembed.utils.transforms import SubsetSample
+import lightning as pl
 import torch
 import torch_geometric.transforms as tgt
 from gembed.core.optim import gradient_ascent
 from gembed.vis import plot_features_2D
-from transform import SubsetSample
 
 
 def embed_shape_space(

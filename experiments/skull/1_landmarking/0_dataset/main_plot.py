@@ -5,7 +5,7 @@ sys.path.insert(0, "../")
 
 import os
 
-import pytorch_lightning as pl
+import lightning as pl
 from gembed.dataset import (
     MSDLiver,
     ParisVolumetricSkulls,
@@ -15,7 +15,7 @@ from gembed.dataset import (
     PittsburghDentalCastsCurvature,
 )
 from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.strategies.ddp import DDPStrategy
+from lightning.pytorch.strategies import DDPStrategy
 from torch_geometric.loader import DataLoader
 import torch_geometric.transforms as tgt
 from gembed.vis import plot_objects

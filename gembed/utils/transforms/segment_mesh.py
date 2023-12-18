@@ -1,6 +1,8 @@
+import numpy as np
+import pyvista as pv
+import torch
 from torch_geometric.transforms import BaseTransform
 
-import pyvista as pv
 from gembed.utils import adapter
 
 
@@ -26,8 +28,10 @@ class SegmentMesh(BaseTransform):
         # pv_data.plot()
 
         # assign new vertices and faces to original mesh
-        data.face = torch.from_numpy(pv_data.faces).reshape(-1, 4).permute(1, 0)[1:]
-        data.pos = torch.from_numpy(pv_data.points)
+        data.face = (
+            torch.from_numpy(np.copy(pv_data.faces)).reshape(-1, 4).permute(1, 0)[1:]
+        )
+        data.pos = torch.from_numpy(np.copy(pv_data.points))
 
         # remove the segmentation mask
         if self.remove_x:

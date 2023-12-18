@@ -2,7 +2,7 @@
 
 import os
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import matplotlib.pyplot as plt
 import torch_geometric.transforms as tgt
 

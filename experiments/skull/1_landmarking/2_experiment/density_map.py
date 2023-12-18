@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.collections import LineCollection
 
-import pytorch_lightning as pl
+import lightning as pl
 import pyvista as pv
 import torch
 import torch_geometric.transforms as tgt

@@ -7,10 +7,10 @@ import torch
 from abc import ABC
 from gembed import Configuration
 from abc import ABC, abstractmethod
-from pytorch_lightning.core.datamodule import LightningDataModule
+from lightning import LightningDataModule
 from torch_geometric.data import InMemoryDataset
 
-class AbstractDataset(ABC, InMemoryDataset, LightningDataModule):
+class AbstractDataset(InMemoryDataset, LightningDataModule):
     def __init__(
         self,
         root=None,

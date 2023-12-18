@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
 from typing import List, Tuple, Union
-from gembed.core.module import InvertibleModule
 
 import torch
-from gembed.core.distribution import DistributionProtocol
-from gembed.core.module.bijection.abstract_ode import AbstractODE
-from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from torch import Tensor, nn
 
+from gembed.core.distribution import DistributionProtocol
+from gembed.core.module import InvertibleModule
+from gembed.core.module.bijection import ODE
+from gembed.numerics.trace import hutchinson_trace_estimator, trace
 
-# TODO: documentation
+
 class RCMFDynamics(nn.Module):
     def __init__(self, fdyn: nn.Module):
         super().__init__()
@@ -23,17 +23,6 @@ class RCMFDynamics(nn.Module):
         c: Union[List[Tensor], Tensor, None] = None,
         **kwargs,
     ) -> List[Tensor]:
-
-        """Return the tuple  \big(g_\phi(x_t), -Tr \left [ J_{g_\phi}(x_t)\right], \lVert g_\phi(x_t) \rVert^2, \lVert J_{g_\phi}(x_t) \rVert_F^2 \big)
-
-        If estimate_density is true, the density is estimated using Hutchinson trace estimation;
-        \begin{equation}
-          Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A \epsilon ]
-        \end{equation},
-        as long as $p(\epsilon)$ has a zero mean and unit variance. The value for $\epsilon$ is fixed for each solve.
-
-        """
-
         pos, *_ = states
 
         with torch.set_grad_enabled(True):
@@ -42,7 +31,7 @@ class RCMFDynamics(nn.Module):
             pos_dot = self.fdyn.forward(t, pos, c, **kwargs)
 
             # kinetic energy
-            e_dot = torch.sum(pos_dot ** 2, 1)
+            e_dot = torch.sum(pos_dot**2, 1)
 
         return pos_dot, -e_dot
 
@@ -60,7 +49,12 @@ class ZeroProject(InvertibleModule):
         return str(self.__class__.str())
 
 
-class RegularisedContinuousManifoldFlow(AbstractODE):
+class RegularisedContinuousManifoldFlow(ODE):
+    """The `RegularisedContinuousManifoldFlow` class is a subclass of `ODE` that represents a flow from
+    the data manifold to a coordinate space determined by the chart. Provides methods for forward and inverse
+    integration of the dynamics and kinetic energy.
+    """
+
     def __init__(
         self,
         dynamics: Union[RCMFDynamics, nn.Module],
@@ -97,7 +91,7 @@ class RegularisedContinuousManifoldFlow(AbstractODE):
         return x1, *combined_dynamics
 
     def forward(self, z, include_combined_dynamics=False, **kwargs):
-        """Integrate dynamics in the forward in time from $t \in [0, 1]$. """
+        """Integrate dynamics in the forward in time from $t \in [0, 1]$."""
 
         # z=f(x), -log |det Jf|
         x, *combined_dynamics = self._forward(z=z, **kwargs)
@@ -118,22 +112,10 @@ class RegularisedContinuousManifoldFlow(AbstractODE):
         z0, *combined_dynamics = super().inverse(x=x, **kwargs)
         z1 = self.chart.inverse(z0)
 
-        # PLOT #
-        # x_rec, *_ = self._forward(z1, **kwargs)
-        # from gembed.vis import plot_objects
-        # plot_objects(
-        #     (x.cpu(), None),
-        #     (z0.cpu(), None),
-        #     (z1.cpu(), None),
-        #     (x_rec.cpu(), None),
-        # )
-        ########
-
         return z1, *combined_dynamics
 
     def inverse(self, x, include_combined_dynamics=False, **kwargs):
-
-        """Integrate dynamics in the backward in time from $t \in [1, 0]$. """
+        """Integrate dynamics in the backward in time from $t \in [1, 0]$."""
 
         z, *combined_dynamics = self._inverse(x=x, **kwargs)
 
@@ -159,42 +141,6 @@ class RegularisedContinuousManifoldFlow(AbstractODE):
         return_time_steps: bool = False,
         **kwargs,
     ):
-        """Integrate the dynamics and compute the change in log density, kinetic energy, and Frobenius norm of the Jacobian by solving the following ODE:
-
-            \begin{bmatrix}
-            x_{t_1}\\
-            \Delta \log p(x)\\
-            \Delta e\\
-            \Delta n
-            \end{bmatrix}
-            =
-            \begin{bmatrix}
-            x_{t_0}\\
-            0 \\
-            0 \\
-            0
-            \end{bmatrix}
-            +
-            \int_{t_0}^{t_1}
-            \begin{bmatrix}
-            g_\phi(t, x_t)\\
-            -Tr \left[ J_{g_\phi} (x_t) \right] \\
-            - \lVert g_\phi(x_t) \rVert^2 \\
-            - \lVert J_{g_\phi}(x_t) \rVert_F^2
-            \end{bmatrix}
-            \; dt
-
-        Args:
-            pos (Tensor): The initial position tensor.
-            t_span (Tensor): The time span to integrate over.
-            batch (Union[Tensor, None], optional): The batch index assignment for the pos argument. Default: None.
-            condition (Union[Tensor, None], optional): The conditional arguments used to supplement the dynamics function. Default: None.
-            return_time_steps (bool, optional): Whether to return the full sequence of time steps or just the final one. Default: False.
-            **kwargs: Additional arguments to pass to the odeint function.
-
-        Returns:
-            If return_time_steps is False, returns a tuple containing the final position, divergence, kinetic energy, and norm of the Jacobian. Otherwise, returns a tuple containing the full sequence of position, divergence, kinetic energy, and norm of the Jacobian over the time steps."""
-
         kinetic_energy = torch.zeros(pos.shape[0]).to(pos.device)
 
         # if estimating trace with hutchinson sample an epsilon
@@ -207,7 +153,7 @@ class RegularisedContinuousManifoldFlow(AbstractODE):
                 f"and number of conditions {condition.shape[0]}.",
             )
 
-            #condition = condition[batch]
+            # condition = condition[batch]
 
         dynamics = lambda t, x: self.dynamics.forward(t, x, condition, batch=batch)
 

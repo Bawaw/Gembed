@@ -10,7 +10,7 @@ import os
 import gembed.models.point_flow_model as pfm
 from gembed import Configuration
 import torch_geometric.transforms as tgt
-import pytorch_lightning as pl
+import lightning as pl
 from gembed.dataset import (
     MSDLiver,
     MSDHippocampus,
@@ -20,13 +20,14 @@ from gembed.dataset import (
 )
 from gembed.dataset.paris_volumetric_skulls import ParisVolumetricSkulls
 from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.strategies.ddp import DDPStrategy
+from lightning.pytorch.strategies import DDPStrategy
 from torch_geometric.loader import DataLoader
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from gembed.transforms import RandomRotation, RandomTranslation, Clip
 from transform import *
 from math import isclose
 
+import numpy as np
 
 def load_config(experiment_name):
     print(f"Loading experiment: {experiment_name}")
@@ -292,7 +293,7 @@ def load_config(experiment_name):
 
 def train_model(experiment_name, model, train_loader, valid_loader):
     #  init training session
-    tb_logger = pl.loggers.tensorboard.TensorBoardLogger(
+    tb_logger = pl.pytorch.loggers.TensorBoardLogger(
         save_dir=f"lightning_logs/{experiment_name}",
         name="point_flow",
     )

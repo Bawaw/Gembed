@@ -1,9 +1,0 @@
-{
-    "n_components": 512,
-    "fourier_feature_scale_x": 1.0,
-    "fourier_feature_scale_t": 30,
-    "use_stn": False,
-    "use_ltn": True,
-    "use_mtn": True,
-    "lambda_kld": 1e-8,
-}

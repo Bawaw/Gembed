@@ -10,7 +10,7 @@ from gembed.vis.plotter import Plotter
 from gembed.vis import plot_objects
 from transform import SubsetSample
 from torch_scatter import scatter_mean
-import pytorch_lightning as pl
+import lightning as pl
 from gembed.vis import plot_features_2D
 import os
 

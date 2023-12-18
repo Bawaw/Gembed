@@ -3,15 +3,15 @@
 from typing import List, Tuple, Union
 
 import torch
-from gembed.core.distribution import DistributionProtocol
-from gembed.core.module.bijection.abstract_ode import AbstractODE
-from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from torch import Tensor, nn
+
+from gembed.core.distribution import DistributionProtocol
+from gembed.core.module.bijection.ode import ODE
+from gembed.numerics.trace import hutchinson_trace_estimator, trace
 
 
 class CAFDynamics(nn.Module):
     def __init__(self, fdyn: nn.Module, estimate_trace: bool = False):
-
         # TODO: make fdyn callable
         super().__init__()
         self.fdyn = fdyn
@@ -20,7 +20,6 @@ class CAFDynamics(nn.Module):
     def evaluate_trace(
         self, x_out: Tensor, x_in: Tensor, noise: Union[Tensor, None]
     ) -> Tuple[Tensor, Tensor]:
-
         if self.estimate_trace:
             trJ, e_dzdx = hutchinson_trace_estimator(x_out, x_in, noise)
         else:
@@ -36,12 +35,11 @@ class CAFDynamics(nn.Module):
         noise: Union[Tensor, None] = None,
         **kwargs,
     ) -> List[Tensor]:
-
         """Return the tuple (g_\phi(x_t), -Tr \left \{ J_{g_\phi}\right \}(x_t)).
 
         If estimate_density is true, the density is estimated using Hutchinson trace estimation which states that
         \begin{equation}
-          Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A \epsilon ]
+          Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A ϵ ]
         \end{equation},
         as long as $p(\epsilon)$ has a zero mean and unit variance. The value for $\epsilon$ is fixed for each solve.
         """
@@ -65,7 +63,12 @@ class CAFDynamics(nn.Module):
         return pos_dot, -trJ
 
 
-class ContinuousAmbientFlow(AbstractODE):
+class ContinuousAmbientFlow(ODE):
+    """The `ContinuousAmbientFlow` class is a subclass of ODE that represents a continuous normalizing flow
+    model and provides methods for forward and inverse integration, as well as computing the change in
+    log density.
+    """
+
     def __init__(
         self,
         dynamics: Union[CAFDynamics, nn.Module],
@@ -73,7 +76,6 @@ class ContinuousAmbientFlow(AbstractODE):
         noise_distribution: Union[DistributionProtocol, None] = None,
         **kwargs,
     ):
-
         if not isinstance(dynamics, CAFDynamics):
             assert isinstance(
                 dynamics, nn.Module
@@ -99,7 +101,7 @@ class ContinuousAmbientFlow(AbstractODE):
         self.dynamics.estimate_trace = estimate_trace
 
     def forward(self, **kwargs):
-        """Integrate dynamics in the forward in time from $t \in [0, 1]$. """
+        """Integrate dynamics in the forward in time from $t ∈ [0, 1]$."""
 
         # z=f(x), -log |det Jf|
         x, log_det_jac_f = super().forward(**kwargs)
@@ -110,12 +112,11 @@ class ContinuousAmbientFlow(AbstractODE):
         #        => log pz + (-log |det Jf|)
         d_log_p = log_det_jac_f
 
-        # concat output
+        # log px = log pz + ∫_t0^t1 -Tr[Jf] dt
         return (x, d_log_p)
 
     def inverse(self, **kwargs):
-
-        """Integrate dynamics in the backward in time from $t \in [1, 0]$. """
+        """Integrate dynamics in the backward in time from $t ∈ [1, 0]$."""
 
         z, log_det_jac_f_inv = super().inverse(**kwargs)
 
@@ -126,7 +127,7 @@ class ContinuousAmbientFlow(AbstractODE):
         #        => log pz + div(Jf_inv)
         d_log_p = -log_det_jac_f_inv
 
-        # concat output
+        # log px = log pz - ∫_t1^t0 -Tr[Jf] dt
         return (z, d_log_p)
 
     def integrate(
@@ -138,43 +139,6 @@ class ContinuousAmbientFlow(AbstractODE):
         return_time_steps: bool = False,
         **kwargs,
     ):
-
-        """Integrate the dynamics and compute the change in log density, kinetic energy, and Frobenius norm of the Jacobian by solving the following ODE:
-
-            \begin{bmatrix}
-            x_{t_1}\\
-            \Delta p\\
-            \Delta e\\
-            \Delta n
-            \end{bmatrix}
-            =
-            \begin{bmatrix}
-            x_{t_0}\\
-            0 \\
-            0 \\
-            0
-            \end{bmatrix}
-            +
-            \int_{t_0}^{t_1}
-            \begin{bmatrix}
-            g_\phi(t, x_t)\\
-            -Tr \left[ J_{g_\phi} (x_t) \right] \\
-            - \lVert g_\phi(x_t) \rVert^2 \\
-            - \lVert J_{g_\phi}(x_t) \rVert_F^2
-            \end{bmatrix}
-            \; dt
-
-        Args:
-            pos (Tensor): The initial position tensor.
-            t_span (Tensor): The time span to integrate over.
-            batch (Union[Tensor, None], optional): The batch index assignment for the pos argument. Default: None.
-            condition (Union[Tensor, None], optional): The conditional arguments used to supplement the dynamics function. Default: None.
-            return_time_steps (bool, optional): Whether to return the full sequence of time steps or just the final one. Default: False.
-            **kwargs: Additional arguments to pass to the odeint function.
-
-        Returns:
-            If return_time_steps is False, returns a tuple containing the final position, divergence. Otherwise, returns a tuple containing the full sequence of position, divergence over the time steps."""
-
         divergence = torch.zeros(pos.shape[0]).to(pos.device)
 
         # if estimating trace with hutchinson sample an epsilon
@@ -191,7 +155,7 @@ class ContinuousAmbientFlow(AbstractODE):
                 f"and number of conditions {condition.shape[0]}.",
             )
 
-            #condition = condition[batch]
+            # condition = condition[batch]
 
         dynamics = lambda t, x: self.dynamics.forward(
             t, x, condition, noise=epsilon, batch=batch

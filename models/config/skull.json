@@ -1,0 +1,48 @@
+
+{
+    "model_name" : "skull",
+
+    "fourier_feature_scale_t": 30,
+    "fourier_feature_scale_x": 3.0,
+    "lambda_kld":1e-8,
+    "n_components": 512,
+
+    "stn_fourier_feature_scale" : null,
+    "stn_hidden_dim" : 64,
+    "stn_layer_type" : "pointnet",
+    "stn_activation_type": "relu",
+    "stn_n_components" : 6, 
+    "stn_n_hidden_layers" : 2,
+    "use_stn": true,
+
+    "ltn_t_dim":32,
+    "ltn_fourier_feature_scale" : null,
+    "ltn_beta_max":8,
+    "ltn_beta_min":1e-4,
+    "ltn_hidden_dim":512,
+    "ltn_hyper_hidden_dim":128,
+    "ltn_n_hidden_layers":5, 
+    "use_ltn": true,
+    "ltn_layer_type" : "concatsquash",
+    "ltn_activation_type" : "swish",
+
+    "mtn_hidden_dim": 256,
+    "mtn_n_components": 128,
+    "use_mtn": true,
+    
+    "sdm_hidden_dim":128,
+    "sdm_layer_type":"pointnet",
+    "sdm_activation_type": "relu",
+    "sdm_n_hidden_layers":10,
+
+    "pdm_t_dim":32,
+    "pdm_beta_max":3,
+    "pdm_beta_min":1e-4,
+    "pdm_hidden_dim":128,
+    "pdm_hyper_hidden_dim":128,
+    "pdm_in_channels" : 3,
+    "pdm_n_hidden_layers":20,
+    "pdm_out_channels" : 3,
+    "pdm_layer_type" : "hyperconcatsquash",
+    "pdm_activation_type" : "swish"
+}

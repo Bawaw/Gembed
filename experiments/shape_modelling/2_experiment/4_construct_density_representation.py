@@ -3,7 +3,7 @@ import os
 import torch
 import seaborn as sns
 import pyvista as pv
-import pytorch_lightning as pl
+import lightning as pl
 import matplotlib.pyplot as plt
 import torch_geometric.transforms as tgt
 

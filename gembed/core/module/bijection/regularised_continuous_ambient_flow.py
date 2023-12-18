@@ -4,7 +4,7 @@ from typing import List, Tuple, Union
 
 import torch
 from gembed.core.distribution import DistributionProtocol
-from gembed.core.module.bijection.abstract_ode import AbstractODE
+from gembed.core.module.bijection.ode import ODE
 from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from torch import Tensor, nn
 
@@ -35,17 +35,6 @@ class RCAFDynamics(nn.Module):
         noise: Union[Tensor, None] = None,
         **kwargs,
     ) -> List[Tensor]:
-
-        """Return the tuple  \big(g_\phi(x_t), -Tr \left [ J_{g_\phi}(x_t)\right], \lVert g_\phi(x_t) \rVert^2, \lVert J_{g_\phi}(x_t) \rVert_F^2 \big)
-
-        If estimate_density is true, the density is estimated using Hutchinson trace estimation;
-        \begin{equation}
-          Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A \epsilon ]
-        \end{equation},
-        as long as $p(\epsilon)$ has a zero mean and unit variance. The value for $\epsilon$ is fixed for each solve.
-
-        """
-
         pos, *_ = states
 
         # estimate trace => noise is not None
@@ -71,7 +60,11 @@ class RCAFDynamics(nn.Module):
         return pos_dot, -trJ, -e_dot, -n_dot
 
 
-class RegularisedContinuousAmbientFlow(AbstractODE):
+class RegularisedContinuousAmbientFlow(ODE):
+    """The `RegularisedContinuousAmbientFlow` class is a subclass of ODE that represents a continuous flow
+    with regularisation dynamics, allowing for forward and inverse integration, as well as estimation of
+    change in log density, kinetic energy, and Jacobian norm.
+    """
     def __init__(
         self,
         dynamics: Union[RCAFDynamics, nn.Module],
@@ -186,7 +179,9 @@ class RegularisedContinuousAmbientFlow(AbstractODE):
             **kwargs: Additional arguments to pass to the odeint function.
 
         Returns:
-            If return_time_steps is False, returns a tuple containing the final position, divergence, kinetic energy, and norm of the Jacobian. Otherwise, returns a tuple containing the full sequence of position, divergence, kinetic energy, and norm of the Jacobian over the time steps."""
+            If return_time_steps is False, returns a tuple containing the final position, divergence, kinetic energy, and norm of the Jacobian. 
+            Otherwise, returns a tuple containing the full sequence of position, divergence, kinetic energy, and norm of the Jacobian over the time steps.
+        """
 
         divergence, kinetic_energy, norm_jacobian = torch.zeros(3, pos.shape[0]).to(
             pos.device

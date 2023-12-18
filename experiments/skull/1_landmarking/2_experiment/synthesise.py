@@ -4,12 +4,12 @@ import os
 
 from sklearn import mixture
 
-import pytorch_lightning as pl
+import lightning as pl
 import torch
 import torch_geometric.transforms as tgt
 from gembed.core.optim import gradient_ascent
 from gembed.vis import plot_objects
-from transform import SubsetSample
+from gembed.utils.transforms import SubsetSample
 
 
 def sample_random_shape(

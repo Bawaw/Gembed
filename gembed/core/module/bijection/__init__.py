@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from .abstract_ode import AbstractODE
+from .ode import ODE
 from .encoder_decoder import EncoderDecoder
 from .linear_transformation import LinearTransformation
 from .continuous_ambient_flow import ContinuousAmbientFlow

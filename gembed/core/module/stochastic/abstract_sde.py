@@ -5,12 +5,12 @@ from typing import List, Tuple, Union
 
 import torch
 from torch import Tensor
-from gembed.core.module.bijection import AbstractODE
+from gembed.core.module.bijection import ODE
 from gembed.core.module import InvertibleModule
 from gembed.core.module.bijection import ContinuousAmbientFlow
-from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from gembed.core.distribution import MultivariateNormal
 from gembed.core.module.bijection.continuous_ambient_flow import CAFDynamics
+import lightning as pl
 
 
 class DensityDynamics(CAFDynamics):
@@ -58,11 +58,18 @@ class DensityDynamics(CAFDynamics):
         return drift, div_drift
 
 
-class AbstractSDE(InvertibleModule):
-    def __init__(self, f_score, sample_method="ode", sample_method_kwargs={}):
+class AbstractSDE(pl.LightningModule, InvertibleModule):
+    """ Abstract Stochastic Differential Equation (SDE) class for defining continuous generative models using normalizing flows.
+        
+        This code is based on source: https://github.com/yang-song/score_sde/blob/main/sde_lib.py and correspondeing paper
+    """
+    #TODO: split this in a SDE and normalising flow component
+    def __init__(self, f_score, dim, base_distribution, sample_method="ode", sample_method_kwargs={}):
         super().__init__()
 
+        self.dim = dim
         self.f_score = f_score
+        self.base_distribution = base_distribution
 
         self.set_sampler(sample_method, **sample_method_kwargs)
 
@@ -70,14 +77,20 @@ class AbstractSDE(InvertibleModule):
             DensityDynamics(
                 self.score, self.diffusion_coefficient, self.inverse_drift_coefficient
             ),
-            noise_distribution=MultivariateNormal(torch.zeros(3), torch.eye(3, 3)),
+            noise_distribution=MultivariateNormal(torch.zeros(dim), torch.eye(dim, dim)),
             estimate_trace=False,
             method="rk4",
         )
 
     def set_sampler(self, sample_method, **sample_method_kwargs):
+        """ Set the sampler based on the chosen sampling method.
+
+        Args:
+            sample_method (str): Sampling method for the SDE.
+            sample_method_kwargs (dict): Additional keyword arguments for the chosen sampling method.
+        """
         if sample_method == "ode":
-            self.sampler = AbstractODE(
+            self.sampler = ODE(
                 lambda t, x, c, batch: self.inverse_drift_coefficient(
                     x=x, t=t.repeat(batch.max() + 1, 1), batch=batch, condition=c
                 ),
@@ -86,6 +99,22 @@ class AbstractSDE(InvertibleModule):
             )
 
     def inverse_drift_coefficient(self, x, t, batch=None, condition=None):
+        """
+            Calculate the inverse drift coefficient.
+
+            \begin{equation}
+            f(x, t) - \frac{1}{2} g(t)^2 \nabla _x \log p_t(x)
+            \end{equation}
+
+            Args:
+                x (Tensor): Input tensor.
+                t (Tensor): Time tensor.
+                batch (Tensor): Batch tensor (default is None).
+                condition (Tensor): Condition tensor (default is None).
+
+            Returns:
+                Tensor: Inverse drift coefficient.
+        """
         drift = self.drift_coefficient(x, t, batch, condition)
         diffusion = self.diffusion_coefficient(x, t, batch, condition)
 
@@ -94,45 +123,164 @@ class AbstractSDE(InvertibleModule):
         # f(x, t) - 1/2 g(t)^2 ∇ₓlog pₜ(x)
         return drift - (0.5 * diffusion ** 2 * score)
 
-    def inverse_diffusion_coefficient(self, t, batch=None, condition=None):
+    def inverse_diffusion_coefficient(self, x, t, batch=None, condition=None):
+        """ Calculate the inverse diffusion coefficient.
+
+        \begin{equation}
+            g(x, t)
+        \end{equation}
+
+        Args:
+            x (Tensor): Input tensor.
+            t (Tensor): Time tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+
+        Returns:
+            Tensor: Inverse diffusion coefficient.
+
+        """
+        
+        # g(t)
         diffusion = self.diffusion_coefficient(x, t, batch, condition)
 
         return diffusion
 
-    def log_prob(self, x, batch, condition, time_steps=100):
+    def log_prob(self, x, batch, condition, time_steps=100, estimate_trace=False):
+        """ Calculate the log probability of the data.
+
+        Args:
+            x (Tensor): Input tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+            time_steps (int): Number of time steps for estimating the density (default is 100).
+            estimate_trace (bool): Whether to estimate the trace (default is False).
+
+        Returns:
+            Tensor: Log probability of the data.
+        """
+        if batch is None:
+            batch = torch.zeros(x.shape[0], dtype=torch.long).to(x.device)
+
+        previous_estimate_trace = self.density_estimator.estimate_trace
+        self.density_estimator.set_estimate_trace(estimate_trace)
+
         z, d_log_pz = self.density_estimator.forward(
             z=x, batch=batch, condition=condition, time_steps=time_steps
         )
+
+        self.density_estimator.set_estimate_trace(previous_estimate_trace)
+
+        # log px = log pz + ∫_t0^t1 -Tr[Jf] dt
         return self.base_log_prob(z) + d_log_pz
 
     @abstractmethod
     def drift_coefficient(self, x, t, batch=None, condition=None):
-        # returns f(x, t)
+        """ Abstract method to define the drift coefficient.
+        
+        \begin{equation}
+            f(x, t)
+        \end{equation}
+
+        Args:
+            x (Tensor): Input tensor.
+            t (Tensor): Time tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+
+        Returns:
+            Tensor: Drift coefficient.
+        """
 
         # R^d -> R^d
         raise NotImplemented()
 
     @abstractmethod
     def diffusion_coefficient(self, x, t, batch=None, condition=None):
-        # returns g(t)
+        """ Abstract method to define the diffusion coefficient.
+
+        \begin{equation}
+            G(x, t)
+        \end{equation}
+
+        Args:
+            x (Tensor): Input tensor.
+            t (Tensor): Time tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+
+        Returns:
+            Tensor: Diffusion coefficient.
+        """
 
         # R -> R
         raise NotImplemented()
 
     @abstractmethod
     def base_log_prob(self, z):
-        raise NotImplemented()
+        """ Method to compute the log density of the base distribution.
 
-    def sample_base(self, shape):
-        raise NotImplemented()
+        \begin{equation}
+            p(z) = N(0, I)
+        \end{equation}
+
+        Args:
+            z (Tensor): Input tensor.
+
+        Returns:
+            Tensor: Log probability of the base distribution.
+        """
+        return self.base_distribution.log_prob(z)
+
+    def sample_base(self, n_samples):
+        """ Abstract method to sample from the base distribution.
+
+        \begin{equation}
+            z \sim p(z)
+        \end{equation}
+
+        Args:
+            shape: Shape of the sample.
+
+        Returns:
+            Tensor: Sample from the base distribution.
+        """
+        return self.base_distribution.sample(n_samples)
 
     @abstractmethod
     def marginal_prob_params(self, x, t, batch=None, condition=None):
-        # returns μ σ for p_t(x) = N(μ, σ)
+        """ Abstract method to define the parameters for the marginal probability distribution.
+    
+        returns μ, σ for p_0t(x) = N(μ, σ)
+
+        Args:
+            x (Tensor): Input tensor.
+            t (Tensor): Time tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+
+        Returns:
+            Tuple: Tuple containing mean and standard deviation parameters.
+        """
 
         raise NotImplemented()
 
     def score(self, x, t, batch=None, condition=None):
+        """ Calculate the score for the SDE.
+
+        \begin{equation}
+            s(x, t, c)
+        \end{equation}
+
+        Args:
+            x (Tensor): Input tensor.
+            t (Tensor): Time tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+
+        Returns:
+            Tensor: Score for the SDE.
+        """
         return self.f_score(x=x, t=t, c=condition, batch=batch)
 
     def forward(
@@ -144,6 +292,19 @@ class AbstractSDE(InvertibleModule):
         return_time_steps: bool = False,
         **kwargs,
     ):
+         """ Forward pass through the model to generate samples.
+
+        Args:
+            z (Tensor): Input tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+            time_steps (int): Number of time steps for sampling (default is 100).
+            return_time_steps (bool): Whether to return intermediate time steps (default is False).
+
+        Returns:
+            Tensor: Generated samples.
+        """
+
         if batch is None:
             batch = torch.zeros(z.shape[0], dtype=torch.long).to(z.device)
 
@@ -161,6 +322,18 @@ class AbstractSDE(InvertibleModule):
         return_time_steps: bool = False,
         **kwargs,
     ):
+        """ Inverse pass through the model to generate representation.
+
+        Args:
+            x (Tensor): Input tensor.
+            batch (Tensor): Batch tensor (default is None).
+            condition (Tensor): Condition tensor (default is None).
+            time_steps (int): Number of time steps for inverse sampling (default is 100).
+            return_time_steps (bool): Whether to return intermediate time steps (default is False).
+
+        Returns:
+            Tensor: Reconstructed samples.
+        """
         if batch is None:
             batch = torch.zeros(x.shape[0], dtype=torch.long).to(x.device)
 

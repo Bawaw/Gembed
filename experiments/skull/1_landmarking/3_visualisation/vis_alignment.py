@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import pytorch_lightning as pl
+import lightning as pl
 import torch
 import torch_geometric.transforms as tgt
 from gembed.vis import Plotter

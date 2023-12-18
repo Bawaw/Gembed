@@ -12,9 +12,3 @@ class InvertibleModule(Module):
 
     def inverse(self, *input, **kwargs) -> Union[List[Tensor], Tensor]:
         raise NotImplementedError()
-
-    def freeze(self, freeze: bool) -> InvertibleModule:
-        for parameter in self.parameters():
-            parameter.requires_grad = not freeze
-
-        return self

@@ -17,7 +17,7 @@ from gembed.dataset import (
     PittsburghDentalCastsCurvature,
 )
 from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.utilities.model_summary.model_summary import ModelSummary
+from lightning.utilities.model_summary.model_summary import ModelSummary
 from transform import *
 from datasets import *
 from models import *

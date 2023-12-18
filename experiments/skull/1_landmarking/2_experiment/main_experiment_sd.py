@@ -1,55 +1,38 @@
 #!/usr/bin/env python3
 import os
 import sys
-
-sys.path.insert(0, "../")
-
-import pyvista as pv
-import gembed.models.point_flow_model as pfm
-import gembed.models.point_manifold_flow_model as pmfm
-import gembed.models.point_score_diffusion_model as psdm
 import torch
+import pyvista as pv
 import torch_geometric.transforms as tgt
-from gembed.dataset import MSDLiver, MSDHippocampus
-
-
-from synthesise import *
-from register import *
-from embed_shape_space import *
-from interpolate import *
-from atlas import *
-from align import *
-
-from density_map import *
-from gembed import Configuration
-from gembed.dataset.paris_volumetric_skulls import ParisVolumetricSkulls
-from gembed.dataset import (
-    MSDHippocampus,
-    ABCDBrain,
-    PittsburghDentalCasts,
-    PittsburghDentalCastsCurvature,
-)
-from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.utilities.model_summary.model_summary import ModelSummary
-from reconstruct import *
-from gembed.core.optim import gradient_langevin_dynamics, gradient_ascent
-import gembed.models.point_score_diffusion_model as psd
-from transform import *
-from datasets import *
-from models import *
-from glob import glob
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+# from synthesise import *
+# from register import *
+from embed_shape_space import *
+from interpolate import *
+# from atlas import *
+# from align import *
+# from reconstruct import *
+# from datasets import *
+# from models import *
+# from density_map import *
 
-def load_config(
+from gembed.models import PointScoreDiffusionModel
+from gembed.dataset import load_dataset
+from gembed.utils.dataset import train_valid_test_split
+from lightning.utilities.model_summary.model_summary import ModelSummary
+from gembed.core.optim import gradient_ascent
+
+
+def load_experiment(
     experiment_name,
     version=0,
     n_components=32,
     save_results=False,
 ):
     dataset = load_dataset(experiment_name, train=False)
-    model = load_point_score_diffusion_model(experiment_name, version=version)
+    model = PointScoreDiffusionModel.load(experiment_name, version=version)
 
     train, valid, test = train_valid_test_split(dataset)
     template = train[0].clone()
@@ -89,19 +72,17 @@ if __name__ == "__main__":
 
     experiment_name = sys.argv[-2]
     experiment_version = sys.argv[-1]
-    (model, template, train, valid, test, snapshot_root,) = load_config(
+    (model, template, train, valid, test, snapshot_root,) = load_experiment(
         experiment_name,
         version=experiment_version,
         n_components=512,
         save_results=False,
     )
 
-    # train = train[:1]
-    # train = train[:4]
-
     with torch.no_grad():
 
         def reconstruct(model, dataset, device="cpu"):
+            import lightning as pl
             pl.seed_everything(42, workers=True)
 
             f_sample_points = lambda n_samples: (
@@ -143,7 +124,7 @@ if __name__ == "__main__":
 
                 # reconstruct the shape
                 x1 = model.pdm_forward(
-                    z=0.7*model.pdm.base_distribution.sample(int(8e2)).to(device),
+                    z=0.7*model.pdm.base_distribution.sample(int(8e4)).to(device),
                     condition=condition,
                     return_time_steps=False,
                 )
@@ -187,7 +168,7 @@ if __name__ == "__main__":
                 #     (x2.cpu(), x2.cpu()[:, 1]),
                 # )
 
-        # reconstruct(model, train[:4], device=device)
+        #reconstruct(model, train[:4], device=device)
         # reconstruct(model, valid[:4], device=device)
 
         # 1) Evaluate data alignment
@@ -376,116 +357,3 @@ if __name__ == "__main__":
         # if experiment_name == "dental" or experiment_name == "skull":
         #################################
 
-        # sampled reconstruction (point GT)
-        # sampled_reconstruction(
-        #     model,
-        #     train,
-        #     device=device,
-        #     sampled_vis_mesh=False,  # True,
-        #     n_point_samples=80000,
-        #     # n_refinement_steps=5,
-        # )
-        # sampled_reconstruction(
-        #     model,
-        #     valid,
-        #     device=device,
-        #     sampled_vis_mesh=True,
-        #     n_input_samples=n_input_samples,
-        # )
-
-        # sampled reconstruction
-        # sampled_reconstruction(model, train, device=device, n_input_samples=n_input_samples)
-        # sampled_reconstruction(model, valid, device=device, n_input_samples=n_input_samples)
-
-        # pc reconstruction
-        # template_reconstruction(
-        #     model, train, template, pc_template, device=device, sampled_vis_mesh=True, n_input_samples=n_input_samples
-        # )
-        # template_reconstruction(
-        #     model, valid, template, pc_template, device=device, sampled_vis_mesh=True, n_input_samples=n_input_samples
-        # )
-
-        # pc reconstruction
-        # template_reconstruction(model, train, template, pc_template, device=device, n_input_samples=n_input_samples)
-        # template_reconstruction(model, valid, template, pc_template, device=device, n_input_samples=n_input_samples)
-
-        # mesh reconstruction
-        # template_reconstruction(
-        #     model,
-        #     train,
-        #     template,
-        #     mesh_template,
-        #     device=device,
-        #     n_input_samples=n_input_samples,
-        # )
-        # template_reconstruction(
-        #     model,
-        #     valid,
-        #     template,
-        #     mesh_template,
-        #     device=device,
-        #     n_input_samples=n_input_samples,
-        # )
-
-        # animate the reconstruction
-        # animated_reconstruction(
-        #     model,
-        #     train,
-        #     experiment_name,
-        #     "train",
-        #     device=device,
-        #     start_pause_frames=10,
-        #     pre_refinement_pause_frames=25,
-        #     end_pause_frames=50,
-        # )
-        # animated_reconstruction(model, valid, experiment_name, "valid", device=device, n_input_samples=n_input_samples)
-        #
-        # from animated_interpolation import animated_interpolation
-
-        # animated_interpolation(
-        #     model,
-        #     Zs_train,
-        #     experiment_name=experiment_name,
-        #     split="train",
-        #     device=device,
-        #     start_pause_frames=0,
-        #     shape_pause_frames=0,
-        # )
-
-        # Density map
-        # density_map(model, train, device=device, n_input_samples=n_input_samples)
-        # density_map(model, valid, device=device, n_input_samples=n_input_samples)
-
-        # template generation
-        # template = construct_template(model, train, template, n_samples=100, n_iters=5, device="cuda", n_input_samples=n_input_samples)
-        # torch.save(template, "template.pt")
-        # template = torch.load("template.pt")
-
-        # corrected reconstruction
-        # sampled_reconstruction_with_correction(
-        #     model,
-        #     train,
-        #     device=device,
-        #     sampled_vis_mesh=True,
-        #     refinement_sampler=gradient_ascent,
-        #     n_input_samples=n_input_samples,
-        # )
-        # sampled_reconstruction_with_correction(
-        #     model, valid, device=device, sampled_vis_mesh=True, refinement_sampler=gradient_ascent
-        # )
-        # template_reconstruction_with_correction(
-        #     model, train, template, mesh_template, device=device, refinement_sampler=gradient_ascent, n_input_samples=n_input_samples
-        # )
-        # template_reconstruction_with_correction(
-        #     model, valid, template, mesh_template, device=device, refinement_sampler=gradient_ascent
-        # )
-
-        # template construction
-        # frechet_mean(model, train, n_input_samples=n_input_samples, init_template=template, device=device)
-        # construct_template(
-        #     model,
-        #     train,
-        #     n_input_samples=n_input_samples,
-        #     init_template=template,
-        #     device=device,
-        # )

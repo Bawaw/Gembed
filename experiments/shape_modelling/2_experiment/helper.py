@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 
+import json
 import os
-import torch
+
+import matplotlib.pyplot as plt
+import lightning as pl
 import pyvista as pv
 import seaborn as sns
-import pytorch_lightning as pl
-import matplotlib.pyplot as plt
+import torch
 import torch_geometric.transforms as tgt
+from lightning.pytorch.utilities.model_summary.model_summary import \
+    ModelSummary
 
-from gembed.dataset import load_dataset
+from gembed import Configuration
 from gembed.core.optim import gradient_ascent
+from gembed.dataset import load_dataset
 from gembed.models import PointScoreDiffusionModel
 from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.utilities.model_summary.model_summary import ModelSummary
+from gembed.utils.transforms.subset_sample import SubsetSample
 
 PYVISTA_PLOT_KWARGS = {
     "color" : "#cccccc",
@@ -118,7 +123,13 @@ def load_experiment(args):
 
     # LOAD DATA & MODEL
     dataset = load_dataset(experiment_name, train=False)
-    model = PointScoreDiffusionModel.load(experiment_name, version=version).to(device)
+
+    path_model_kwargs = os.path.join(Configuration()["Paths"]["MODEL_CONFIG_DIR"], experiment_name + ".json")
+    
+    model = PointScoreDiffusionModel.load(
+        **json.load(open(path_model_kwargs)),
+        version=version
+    ).to(device)
 
     train, valid, test = train_valid_test_split(dataset)
     template = train[0].clone()

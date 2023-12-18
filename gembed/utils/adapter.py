@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
-import torch
+import numpy as np
 import pyvista as pv
+import torch
 from torch_geometric.data import Data
+
 
 def torch_geomtric_data_to_vtk(verts, faces):
     if faces.shape[0] != 3:
@@ -14,7 +16,7 @@ def torch_geomtric_data_to_vtk(verts, faces):
     return pv.PolyData(verts.numpy(), faces)
 
 def vtk_to_torch_geometric_data(data):
-    faces = torch.from_numpy(data.faces)
+    faces = torch.from_numpy(np.copy(data.faces))
     faces = faces.reshape(-1, 4).permute(1, 0)[1:]
-    vertices = torch.from_numpy(data.points)
+    vertices = torch.from_numpy(np.copy(data.points))
     return Data(pos=vertices, face=faces)

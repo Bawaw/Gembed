@@ -6,7 +6,7 @@ import pyvista as pv
 
 from torch_geometric.data import InMemoryDataset
 from gembed.utils.adapter import vtk_to_torch_geometric_data
-from pytorch_lightning.core.datamodule import LightningDataModule
+from lightning import LightningDataModule
 
 
 class SyntheticPyramidDataset(InMemoryDataset, LightningDataModule):

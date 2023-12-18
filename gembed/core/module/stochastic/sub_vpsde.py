@@ -6,24 +6,24 @@ from gembed.core.distribution import MultivariateNormal
 
 
 class SubVPSDE(AbstractSDE):
-    """Variance preserving Stochastic differential equation, this is the continuous version of the DDPM model.
+    """Variant on variance preserving Stochastic differential equation, this is the continuous version of the DDPM model.
 
     Source: This code is based on https://github.com/yang-song/score_sde/blob/main/sde_lib.py
     """
 
-    def __init__(self, beta_min, beta_max, **kwargs):
-        super().__init__(**kwargs)
-
-        print(
-            f"Initialising SubVPSDE model with beta_min: {beta_min} and beta_max: {beta_max}"
+    def __init__(self, beta_min, beta_max, dim, **kwargs):
+        base_distribution = MultivariateNormal(
+            torch.zeros(dim),
+            torch.eye(dim, dim),
         )
+
+        super().__init__(dim=dim, base_distribution=base_distribution, **kwargs)
+
+        print(f"sub-VPSDE(β_min: {beta_min}, β_max: {beta_max})")
 
         self.beta_min = beta_min
         self.beta_max = beta_max
-        self.base_distribution = MultivariateNormal(
-            torch.zeros(3),
-            torch.eye(3, 3),
-        )
+
         self.beta = lambda t: torch.lerp(
             torch.Tensor([self.beta_min]).to(t.device),
             torch.Tensor([self.beta_max]).to(t.device),

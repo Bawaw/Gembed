@@ -5,8 +5,8 @@ import numpy as np
 
 from math import cos, sin, pi, sqrt
 from torch_geometric.data import Data, InMemoryDataset
-from pytorch_lightning.core.datamodule import LightningDataModule
-import pytorch_lightning as pl
+from lightning import LightningDataModule
+import lightning as pl
 
 
 # class SyntheticGaussianDataset(InMemoryDataset, LightningDataModule):

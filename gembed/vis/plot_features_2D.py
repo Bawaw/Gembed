@@ -31,7 +31,7 @@ def plot_features_2D(
         latent_2.append(Z_pca[:, 1])
         method.append(["PCA"] * Zs.shape[0])
         if Z_colors is not None:
-            colors.append(Z_collors)
+            colors.append(Z_colors)
 
     # embed data using UMAP
     if umap:
@@ -57,7 +57,7 @@ def plot_features_2D(
         x="latent_1",
         y="latent_2",
         col="Method",
-        hue="hue",
+        hue="hue" if data["hue"] is not None else None,
         facet_kws=dict(sharex=False, sharey=False),
         **kwargs
     )

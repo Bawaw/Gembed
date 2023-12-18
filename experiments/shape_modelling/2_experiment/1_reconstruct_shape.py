@@ -2,7 +2,7 @@
 
 import os
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import torch_geometric.transforms as tgt
 
 from gembed.vis import plot_objects
@@ -57,9 +57,9 @@ def main(
 
         # 2) superimpose shape
         if model.stn is not None:
-            X_aligned = model.stn.forward(X, None, stn_params)
+            X_aligned = model.stn.forward(X.pos.to(device), None, stn_params)
         else:
-            X_aligned = X
+            X_aligned = X.pos
 
         # 3) reconstruct the shape
         X_rec_sampled = model.pdm_forward(
@@ -73,7 +73,7 @@ def main(
 
         # 5) invert stn
         if model.stn is not None:
-            X_rec = model.stn.inverse(X_rec_refined, None, params)
+            X_rec = model.stn.inverse(X_rec_refined, None, stn_params)
         else:
             X_rec = X_rec_refined
 

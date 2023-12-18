@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from gembed.utils.transforms import ThresholdImg2BinaryMask, BinaryMask2Surface, SubsetSample, SwapAxes, InvertAxis, SegmentMeshByCurvature, SegmentMesh, ThresholdImg2BinaryMask, BinaryMask2Volume
+from gembed.utils.transforms import ThresholdImg2BinaryMask, BinaryMask2Surface, SubsetSample, SwapAxes, InvertAxis, SegmentMeshByCurvature, SegmentMesh, ThresholdImg2BinaryMask, BinaryMask2Volume, RandomRotation, RandomTranslation
 import torch_geometric.transforms as tgt
 from gembed.dataset import (
     MSDHippocampus,
@@ -17,11 +17,8 @@ def load_dataset(experiment_name, train=True):
                 [
                     tgt.SamplePoints(8192),
                     tgt.NormalizeScale(),
-                    # ThinPlateSplineAugmentation(noise_sigma=0.1),
-                    # tgt.RandomShear(0.1),
-                    # tgt.NormalizeScale(),
-                    # RandomRotation(sigma=0.2),
-                    # RandomTranslation(sigma=0.1),
+                    RandomRotation(sigma=0.2),
+                    RandomTranslation(sigma=0.1),
                 ]
             )
 
@@ -44,12 +41,8 @@ def load_dataset(experiment_name, train=True):
                 [
                     SubsetSample(8192),
                     tgt.NormalizeScale(),
-                    # tgt.RandomFlip(axis=0),
-                    # tgt.RandomScale([0.8, 1.0]),
-                    # ThinPlateSplineAugmentation(),
-                    # tgt.RandomShear(0.05),
-                    # RandomRotation(sigma=0.2),
-                    # RandomTranslation(sigma=0.1),
+                    RandomRotation(sigma=0.2),
+                    RandomTranslation(sigma=0.1),
                 ]
             )
 
@@ -61,7 +54,7 @@ def load_dataset(experiment_name, train=True):
                 [ThresholdImg2BinaryMask(), BinaryMask2Volume(), SwapAxes([2, 1, 0])]
             ),
             transform=transform,
-        )[:100]
+        )
 
     elif experiment_name == "brain":
         if train:
@@ -69,15 +62,15 @@ def load_dataset(experiment_name, train=True):
                 [
                     tgt.SamplePoints(8192),
                     tgt.NormalizeScale(),
-                    # RandomRotation(sigma=0.2),
-                    # RandomTranslation(sigma=0.1),
+                    RandomRotation(sigma=0.2),
+                    RandomTranslation(sigma=0.1),
                 ]
             )
 
         else:
             transform = None
 
-        dataset = ABCDBrain(transform=transform)[:100]
+        dataset = ABCDBrain(transform=transform)
 
     elif experiment_name == "dental":
         if train:
@@ -85,11 +78,8 @@ def load_dataset(experiment_name, train=True):
                 [
                     tgt.SamplePoints(8192),
                     tgt.NormalizeScale(),
-                    # ThinPlateSplineAugmentation(),
-                    # tgt.RandomShear(0.05),
-                    # tgt.NormalizeScale(),
-                    # RandomRotation(sigma=0.2),
-                    # RandomTranslation(sigma=0.1),
+                    RandomRotation(sigma=0.2),
+                    RandomTranslation(sigma=0.1),
                 ]
             )
 
@@ -106,7 +96,7 @@ def load_dataset(experiment_name, train=True):
                 ]
             ),
             transform=transform,
-        )[:100]
+        )
     else:
         raise ValueError(f"Invalid experiment name: {experiment_name}")
 

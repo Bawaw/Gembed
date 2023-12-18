@@ -3,15 +3,15 @@
 from typing import List, Tuple, Union
 
 import torch
-from gembed.core.distribution import DistributionProtocol
-from gembed.core.module.bijection.abstract_ode import AbstractODE
-from gembed.numerics.trace import hutchinson_trace_estimator, trace
 from torch import Tensor, nn
+
+from gembed.core.distribution import DistributionProtocol
+from gembed.core.module.bijection.ode import ODE
+from gembed.numerics.trace import hutchinson_trace_estimator, trace
 
 
 class ARCAFDynamics(nn.Module):
     def __init__(self, fdyn: nn.Module, adyn: nn.Module, estimate_trace: bool = False):
-
         super().__init__()
         self.fdyn = fdyn
         self.adyn = adyn
@@ -20,7 +20,6 @@ class ARCAFDynamics(nn.Module):
     def evaluate_trace(
         self, x_out: Tensor, x_in: Tensor, noise: Union[Tensor, None]
     ) -> Tuple[Tensor, Tensor]:
-
         if self.estimate_trace:
             trJ, J = hutchinson_trace_estimator(x_out, x_in, noise)
         else:
@@ -36,16 +35,6 @@ class ARCAFDynamics(nn.Module):
         noise: Union[Tensor, None] = None,
         **kwargs,
     ) -> List[Tensor]:
-
-        """Return the tuple  \big(g_\phi(x_t), -Tr \left [ J_{g_\phi}(x_t)\right], \lVert g_\phi(x_t) \rVert^2, \lVert J_{g_\phi}(x_t) \rVert_F^2 \big)
-
-        If estimate_density is true, the density is estimated using Hutchinson trace estimation;
-        \begin{equation}
-          Tr\{A\} = \mathbb{E}_{z\sim p(z)} [ \epsilon^T A \epsilon ]
-        \end{equation},
-        as long as $p(\epsilon)$ has a zero mean and unit variance. The value for $\epsilon$ is fixed for each solve.
-
-        """
 
         pos, aug, *_ = states
 
@@ -65,15 +54,20 @@ class ARCAFDynamics(nn.Module):
             trJ, J = self.evaluate_trace(pos_dot, pos, noise=noise)
 
             # kinetic energy
-            e_dot = torch.sum(pos_dot ** 2, 1)
+            e_dot = torch.sum(pos_dot**2, 1)
 
             # frobenius jacobian
-            n_dot = torch.sum(J ** 2, 1)
+            n_dot = torch.sum(J**2, 1)
 
         return pos_dot, aug_dot, -trJ, -e_dot, -n_dot
 
 
-class AugmentedRegularisedContinuousAmbientFlow(AbstractODE):
+class AugmentedRegularisedContinuousAmbientFlow(ODE):
+    """The `AugmentedRegularisedContinuousAmbientFlow` class is a subclass of ODE that integrates the
+    dynamics of a continuous flow and computes the change in log density, kinetic energy, and Frobenius
+    norm of the Jacobian.
+    """
+
     def __init__(
         self,
         function_dynamics: nn.Module,
@@ -82,7 +76,6 @@ class AugmentedRegularisedContinuousAmbientFlow(AbstractODE):
         noise_distribution: Union[DistributionProtocol, None] = None,
         **kwargs,
     ):
-
         dynamics = ARCAFDynamics(function_dynamics, augment_dynamics)
 
         super().__init__(dynamics, **kwargs)
@@ -112,42 +105,6 @@ class AugmentedRegularisedContinuousAmbientFlow(AbstractODE):
         return_time_steps: bool = False,
         **kwargs,
     ):
-        """Integrate the dynamics and compute the change in log density, kinetic energy, and Frobenius norm of the Jacobian by solving the following ODE:
-
-            \begin{bmatrix}
-            x_{t_1}\\
-            \Delta \log p(x)\\
-            \Delta e\\
-            \Delta n
-            \end{bmatrix}
-            =
-            \begin{bmatrix}
-            x_{t_0}\\
-            0 \\
-            0 \\
-            0
-            \end{bmatrix}
-            +
-            \int_{t_0}^{t_1}
-            \begin{bmatrix}
-            g_\phi(t, x_t)\\
-            -Tr \left[ J_{g_\phi} (x_t) \right] \\
-            - \lVert g_\phi(x_t) \rVert^2 \\
-            - \lVert J_{g_\phi}(x_t) \rVert_F^2
-            \end{bmatrix}
-            \; dt
-
-        Args:
-            pos (Tensor): The initial position tensor.
-            t_span (Tensor): The time span to integrate over.
-            batch (Union[Tensor, None], optional): The batch index assignment for the pos argument. Default: None.
-            condition (Union[Tensor, None], optional): The conditional arguments used to supplement the dynamics function. Default: None.
-            return_time_steps (bool, optional): Whether to return the full sequence of time steps or just the final one. Default: False.
-            **kwargs: Additional arguments to pass to the odeint function.
-
-        Returns:
-            If return_time_steps is False, returns a tuple containing the final position, divergence, kinetic energy, and norm of the Jacobian. Otherwise, returns a tuple containing the full sequence of position, divergence, kinetic energy, and norm of the Jacobian over the time steps."""
-
         divergence, augmentation, kinetic_energy, norm_jacobian = torch.zeros(
             4, pos.shape[0]
         ).to(pos.device)
@@ -166,7 +123,7 @@ class AugmentedRegularisedContinuousAmbientFlow(AbstractODE):
                 f"and number of conditions {condition.shape[0]}.",
             )
 
-            #condition = condition[batch]
+            # condition = condition[batch]
 
         dynamics = lambda t, x: self.dynamics.forward(
             t, x, condition, noise=epsilon, batch=batch

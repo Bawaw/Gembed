@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+import json
 import sys
 
 import os
@@ -9,24 +8,27 @@ from gembed.models import PointScoreDiffusionModel
 from gembed.dataset import load_dataset
 from gembed import Configuration
 import torch_geometric.transforms as tgt
-import pytorch_lightning as pl
+import lightning as pl
 from gembed.dataset.paris_volumetric_skulls import ParisVolumetricSkulls
 from gembed.utils.dataset import train_valid_test_split
-from pytorch_lightning.strategies.ddp import DDPStrategy
+from lightning.pytorch.strategies import DDPStrategy
 from torch_geometric.loader import DataLoader
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
-from gembed.transforms import RandomRotation, RandomTranslation, Clip
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from math import isclose
 
 
-def load_config(experiment_name):
-    print(f"Loading experiment: {experiment_name}")
+def load_config(config_name):
+    print(f"Starting training for model: {config_name}")
 
     # load dataset
-    dataset = load_dataset(experiment_name)
+    dataset = load_dataset(config_name)
 
     # load model
-    model = PointScoreDiffusionModel.load(experiment_name)
+    path_model_kwargs = os.path.join(Configuration()["Paths"]["MODEL_CONFIG_DIR"], config_name + ".json")
+    
+    model = PointScoreDiffusionModel.load(
+        **json.load(open(path_model_kwargs))
+    )
 
     # holdout split
     train, valid, test = train_valid_test_split(dataset)
@@ -37,7 +39,7 @@ def load_config(experiment_name):
     train_loader = DataLoader(
         train,
         shuffle=True,
-        batch_size=45,  # 45,
+        batch_size=45,  
         num_workers=15,
         prefetch_factor=30,
         persistent_workers=True,
@@ -58,9 +60,9 @@ def load_config(experiment_name):
 
 if __name__ == "__main__":
     # e.g. bash$ main_train.py hippocampus
-    experiment_name = sys.argv[-1]
+    config_name = sys.argv[-1]
 
     pl.seed_everything(42, workers=True)
-    model, train_loader, valid_loader = load_config(experiment_name)
+    model, train_loader, valid_loader = load_config(config_name)
 
-    model.fit(train_loader, valid_loader, experiment_name)
+    model.fit(train_loader, valid_loader, config_name)

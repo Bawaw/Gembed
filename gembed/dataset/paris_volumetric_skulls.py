@@ -14,7 +14,7 @@ from .abstract_dataset import AbstractDataset
 # from gembed.vis.plotter import Plotter
 from gembed.models import PCA
 from gembed.registration import AffineRegistration
-from pytorch_lightning.core.datamodule import LightningDataModule
+from lightning import LightningDataModule
 from torch_geometric.data import Data, DataLoader, InMemoryDataset, download_url
 
 

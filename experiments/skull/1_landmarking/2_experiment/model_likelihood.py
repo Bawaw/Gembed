@@ -2,7 +2,7 @@
 
 import os
 import torch
-import pytorch_lightning as pl
+import lightning as pl
 import torch_geometric.transforms as tgt
 from gembed.vis import plot_objects
 

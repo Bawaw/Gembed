@@ -27,7 +27,11 @@ def pairwise_poincare_distances(x, dim=-1):
 
 
 class ContinuousDGM(nn.Module):
-    """Continuous differentiable graph module. Code based on https://github.com/lcosmo/DGM_pytorch/blob/489b43c69af7321b93c3529edb6537fa73325e07/DGMlib/layers.py#L33."""
+    """
+    The Continuous Differentiable Graph Module class is a PyTorch module that learns a continuous graph based on a feature distance 
+    and uses this graph for information sharing between connected nodes.
+    
+    Source: Code based on https://github.com/lcosmo/DGM_pytorch/blob/489b43c69af7321b93c3529edb6537fa73325e07/DGMlib/layers.py#L33."""
 
     def __init__(self, embed_f, input_dim, distance="euclidean"):
         super().__init__()
@@ -54,52 +58,10 @@ class ContinuousDGM(nn.Module):
         if A is not None:
             x = self.embed_f(x, A)
 
-
-        # VERSION 2
-        # compute the distance matrix
-        # D, _ = self.distance(x)
-        # A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
-        # W = (A / A.sum(1))
-
-        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
-        # return W @ x
-
-        # VERSION 3
-        # compute the distance matrix
+        #compute the distance matrix
         D, _ = self.distance(x)
-        A = 1/(1 + D)
+        A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
         W = (A / A.sum(1))
 
-        print("Number of neighbours",((((W > 0.01).sum() - W.shape[0])/2).item()))
+        self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
         return W @ x
-
-        # VERSION 4
-        # compute the distance matrix
-        # D, _ = self.distance(x)
-        # A = 1/(1 + D)
-        # W = (A / A.sum(1))
-
-        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
-        # return W @ x
-
-        # convert adjacency matrix to edge weights
-        # edge_index, edge_weight = dense_to_sparse(A)
-        # TODO: check if this is differentiable
-        # breakpoint()
-
-        # return x, edge_index, edge_weight
-
-        # self.log("Zero neighbours", float((W < 0.01).sum().item()), batch_size=x.shape[0])
-        # return W @ x
-
-        # soft theshold the distances
-        #A = torch.sigmoid(self.temperature.abs() * (self.threshold.abs() - D))
-
-        #return (A / A.sum(1)) @ x
-
-        # convert adjacency matrix to edge weights
-        # edge_index, edge_weight = dense_to_sparse(A)
-        # TODO: check if this is differentiable
-        # breakpoint()
-
-        # return x, edge_index, edge_weight

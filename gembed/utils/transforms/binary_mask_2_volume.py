@@ -1,3 +1,6 @@
+import torch
+import numpy as np
+from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
 
 class BinaryMask2Volume(BaseTransform):
