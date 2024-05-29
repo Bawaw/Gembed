@@ -39,21 +39,20 @@ def load_config(config_name):
     train_loader = DataLoader(
         train,
         shuffle=True,
-        batch_size=45,  
-        num_workers=15,
-        prefetch_factor=30,
+        batch_size=8,  
+        num_workers=5,
+        prefetch_factor=3,
         persistent_workers=True,
         pin_memory=True,
         drop_last=True,
     )
     valid_loader = DataLoader(
         valid,
-        shuffle=False,
-        batch_size=2,  # 6,
-        num_workers=14,
+        shuffle=True,
+        batch_size=8,  
+        num_workers=3,
         persistent_workers=True,
         pin_memory=True,
-        drop_last=True,
     )
 
     return model, train_loader, valid_loader
