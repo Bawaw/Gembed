@@ -2,9 +2,14 @@
 {
     "model_name" : "brain",
 
-    "fourier_feature_scale_t": 30,
+    "phase_0_max_steps": 1e4,
+    "phase_1_max_steps": 2e6,
+    "phase_2_max_steps": 5e4,
+    "phase_3_max_steps": 2e4,
+
+    "fourier_feature_scale_t": 8,
     "fourier_feature_scale_x": 3.0,
-    "lambda_kld":1e-8,
+    "lambda_kld":1e-3,
     "n_components": 512,
 
     "stn_fourier_feature_scale" : null,
@@ -13,6 +18,8 @@
     "stn_activation_type": "relu",
     "stn_n_components" : 6, 
     "stn_n_hidden_layers" : 2,
+    "stn_global_pool_dim": 64,
+    "stn_mlp_dim": [64, 64],
     "use_stn": true,
 
     "ltn_t_dim":32,
@@ -22,27 +29,30 @@
     "ltn_hidden_dim":512,
     "ltn_hyper_hidden_dim":128,
     "ltn_n_hidden_layers":5, 
-    "use_ltn": true,
+    "use_ltn": false,
     "ltn_layer_type" : "concatsquash",
-    "ltn_activation_type" : "swish",
+    "ltn_activation_type" : "tanh",
 
-    "mtn_hidden_dim": 256,
+    "mtn_hidden_dim": 128,
     "mtn_n_components": 128,
     "use_mtn": true,
     
     "sdm_hidden_dim":128,
     "sdm_layer_type":"pointnet",
     "sdm_activation_type": "relu",
+    "sdm_global_pool_dim": 512,
+    "sdm_mlp_dim": [512, 512],
     "sdm_n_hidden_layers":10,
 
     "pdm_t_dim":32,
     "pdm_beta_max":3,
     "pdm_beta_min":1e-4,
     "pdm_hidden_dim":128,
-    "pdm_hyper_hidden_dim":128,
+    "pdm_hyper_hidden_dim":256,
     "pdm_in_channels" : 3,
-    "pdm_n_hidden_layers":20,
+    "pdm_n_hidden_layers":15,
     "pdm_out_channels" : 3,
+    "pdm_mlp_dim": [128, 128],
     "pdm_layer_type" : "hyperconcatsquash",
-    "pdm_activation_type" : "swish"
+    "pdm_activation_type" : "tanh"
 }
