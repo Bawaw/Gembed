@@ -292,7 +292,7 @@ class AbstractSDE(pl.LightningModule, InvertibleModule):
         return_time_steps: bool = False,
         **kwargs,
     ):
-         """ Forward pass through the model to generate samples.
+        """ Forward pass through the model to generate samples.
 
         Args:
             z (Tensor): Input tensor.

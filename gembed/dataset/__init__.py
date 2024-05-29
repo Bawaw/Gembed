@@ -11,4 +11,6 @@ from .pittsburgh_dental_casts import (
     PittsburghDentalCasts,
     PittsburghDentalCastsCurvature,
 )
+from .shape_net import ShapeNet
+from .synthetic_knob_box import SyntheticKnobBox
 from .datasets import load_dataset

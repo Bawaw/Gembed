@@ -23,6 +23,7 @@ class ResidualPointDynamics(nn.Module):
         activation_type,
     ):
         super().__init__()
+        self.activation_type = activation_type
 
         # small scale = large kernel (underfitting)
         # large scale = small kernel (overfitting)
@@ -51,16 +52,26 @@ class ResidualPointDynamics(nn.Module):
                 )
 
         def activation():
-            if activation_type == "tanh":
+            if self.activation_type == "sin":
+                return torch.sin
+            elif self.activation_type == "selu":
+                return nn.SELU()
+            elif self.activation_type == "tanh":
                 return nn.Tanh()
-            elif activation_type == "tanhshrink":
+            elif self.activation_type == "tanhshrink":
                 return nn.Tanhshrink()
-            elif activation_type == "softplus":
+            elif self.activation_type == "softplus":
                 return nn.Softplus()
-            elif activation_type == "swish":
+            elif self.activation_type == "swish":
                 return nn.SiLU()
+            elif self.activation_type == "elu":
+                return nn.ELU()
+            elif self.activation_type == "relu":
+                return nn.ReLU()
             else:
                 assert False
+
+        self.nn_x = layer(hidden_dim, hidden_dim)
 
         # hidden layers
         self.layers = nn.ModuleList(
@@ -68,12 +79,14 @@ class ResidualPointDynamics(nn.Module):
                 tgnn.Sequential(
                     "x, t, batch",
                     [
+                        (activation(),"x -> x"),
+                        nn.BatchNorm1d(hidden_dim),
                         (
                             layer(hidden_dim, hidden_dim),
                             "x, t, batch -> x",
                         ),
-                        nn.LayerNorm(hidden_dim),
                         activation(),
+                        nn.BatchNorm1d(hidden_dim),
                         (
                             layer(hidden_dim, hidden_dim),
                             "x, t, batch -> x",
@@ -94,21 +107,18 @@ class ResidualPointDynamics(nn.Module):
                     layer(hidden_dim, hidden_dim),
                     "x,t,batch -> x",
                 ),
-                nn.LayerNorm(hidden_dim),
                 activation(),
                 # L2
                 (
                     layer(hidden_dim, hidden_dim),
                     "x,t,batch -> x",
                 ),
-                (nn.LayerNorm(hidden_dim), "x -> x"),
                 activation(),
                 # L3
                 (
                     layer(hidden_dim, out_channels),
                     "x,t,batch -> x",
                 ),
-                ResidualCoefficient(),
             ],
         )
 
@@ -122,8 +132,11 @@ class ResidualPointDynamics(nn.Module):
         # prep input
         x, t = self.ffm_x(x), self.ffm_t(t)
 
-        for f in self.layers:
-            x = x + f(x, t, batch=batch)
+        for i, f in enumerate(self.layers):
+            if i == 0: 
+                x = x + f(self.nn_x(x, t, batch=batch), t, batch=batch)
+            else:
+                x = x + f(x, t, batch=batch)
 
         # return velocity
         return self.regression(x, t, batch=batch)

@@ -15,8 +15,6 @@ def plot_features_2D(
 
     assert pca or umap, "Expect at least one to be true for feature representation; pca or umap."
 
-
-
     latent_1 = []
     latent_2 = []
     method = []
@@ -103,7 +101,10 @@ def plot_features_2D(
     if file_name is not None:
         fig.savefig(file_name, bbox_inches="tight", dpi=300)
 
-    plt.show()
+    if file_name is None:
+        plt.show()
+    else: 
+        plt.close()
 
     return fig
 

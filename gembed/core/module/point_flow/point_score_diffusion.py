@@ -11,10 +11,12 @@ from gembed.core.module import InvertibleModule
 
 
 class Phase(Enum):
+    TRAIN_SPATIAL_TRANSFORMER = 0
     TRAIN_POINT_DIFFUSION = 1
     TRAIN_LATENT_DIFFUSION = 2
     TRAIN_METRIC_TRANSFORMER = 3
     EVAL = 4
+
 
 
 class PointScoreDiffusion(pl.LightningModule):
@@ -53,6 +55,7 @@ class PointScoreDiffusion(pl.LightningModule):
         self.mtn = mtn
 
         # variables
+        print(f"Setting up KLD: λ={lambda_kld}")
         self.lambda_kld = lambda_kld
         if phase is None:
             self.set_phase(Phase.TRAIN_POINT_DIFFUSION)
@@ -318,13 +321,25 @@ class PointScoreDiffusion(pl.LightningModule):
             None
         """
 
+        print(f"Setting weight phase to: {phase}")
+
         self.phase = phase
 
-        if phase == Phase.TRAIN_POINT_DIFFUSION:
+        if phase == Phase.TRAIN_SPATIAL_TRANSFORMER:
             if self.ltn is not None:
                 self.ltn.freeze()
             if self.stn is not None:
-                self.stn.unfreeze()
+                self.stn.unfreeze() 
+            if self.mtn is not None:
+                self.mtn.freeze()
+            self.sdm.freeze()
+            self.pdm.freeze()
+
+        elif phase == Phase.TRAIN_POINT_DIFFUSION:
+            if self.ltn is not None:
+                self.ltn.freeze()
+            if self.stn is not None:
+                self.stn.freeze() 
             if self.mtn is not None:
                 self.mtn.freeze()
             self.sdm.unfreeze()
@@ -374,22 +389,70 @@ class PointScoreDiffusion(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        if self.phase == Phase.TRAIN_POINT_DIFFUSION and self.stn is not None:
-            optimiser = torch.optim.Adam(
-                [
-                    {"params": self.stn.parameters(), "weight_decay": 1e-6},
-                    {"params": self.pdm.parameters()},
-                    {"params": self.sdm.parameters()},
-                ],
-                lr=1e-3,
-                weight_decay=0.0,
-            )
-        else:
-            optimiser = torch.optim.Adam(self.parameters(), lr=1e-3)
 
+        if self.phase == Phase.TRAIN_METRIC_TRANSFORMER:
+            optimiser = torch.optim.Adam(self.parameters(), lr=1e-5)
+        else:
+            optimiser = torch.optim.Adam(self.parameters(), lr=3e-4)
         return optimiser
+        
 
     # TRAINING STEP
+    def spatial_transformer_loss(self, train_batch, batch_idx, sigma_t=0.2, sigma_r=0.1):
+        x, batch = train_batch.pos, train_batch.batch
+        batch_size = batch.max() + 1
+
+        # sample random rotation 
+        alpha, beta, gamma = (sigma_r * torch.randn(2*batch_size, 3)).T.to(x)
+        R = torch.stack(
+            [
+                torch.stack(
+                    [
+                        torch.cos(beta) * torch.cos(gamma),
+                        torch.sin(alpha) * torch.sin(beta) * torch.cos(gamma)
+                        - torch.cos(alpha) * torch.sin(gamma),
+                        torch.cos(alpha) * torch.sin(beta) * torch.cos(gamma)
+                        + torch.sin(alpha) * torch.sin(gamma),
+                    ],
+                    -1,
+                ),
+                torch.stack(
+                    [
+                        torch.cos(beta) * torch.sin(gamma),
+                        torch.sin(alpha) * torch.sin(beta) * torch.sin(gamma)
+                        + torch.cos(alpha) * torch.cos(gamma),
+                        torch.cos(alpha) * torch.sin(beta) * torch.sin(gamma)
+                        - torch.sin(alpha) * torch.cos(gamma),
+                    ],
+                    -1,
+                ),
+                torch.stack(
+                    [
+                        -torch.sin(beta),
+                        torch.sin(alpha) * torch.cos(beta),
+                        torch.cos(alpha) * torch.cos(beta),
+                    ],
+                    -1,
+                ),
+            ],
+            -1,
+        )
+
+        # sample random translation 
+        b_transform = (sigma_t * torch.randn(2*batch_size, 3)).to(x)
+
+        # augment data (N x 1 x 3) x (N x 3 x 3) = (N x 1 x 3) 
+        x_aug_1 = (x.clone()[:, None] @ R[:batch_size][batch]).squeeze(1) + b_transform[:batch_size][batch] 
+        x_aug_2 = (x.clone()[:, None] @ R[batch_size:][batch]).squeeze(1) + b_transform[batch_size:][batch] 
+ 
+        # superimpose
+        x_aligned_1 = self.stn(x_aug_1, batch)
+        x_aligned_2 = self.stn(x_aug_2, batch)
+
+        # compute loss
+        loss = scatter_mean((x_aligned_1 - x_aligned_2).pow(2).sum(-1), batch).mean()
+        return loss
+
     def point_diffusion_loss(self, train_batch, batch_idx):
         """This method computes the loss for the main training phase of the PointScoreDiffusion model (training of pdm, sdm, stn).
 
@@ -402,7 +465,6 @@ class PointScoreDiffusion(pl.LightningModule):
         
         source: https://github.com/yang-song/score_sde_pytorch/blob/main/losses.py
         """
-
         x, batch = train_batch.pos, train_batch.batch
         batch_size = batch.max() + 1
 
@@ -416,12 +478,15 @@ class PointScoreDiffusion(pl.LightningModule):
             # C ∼ P(C|X) = N(Z_mean, Z_std)
             condition = Z_mean + Z_std * torch.randn_like(Z_mean)
 
-            kld = -0.5 * torch.sum(1 + Z_log_var - Z_mean.pow(2) - Z_log_var.exp())
+            kld = torch.mean(-0.5 * torch.mean(1 + Z_log_var - Z_mean.pow(2) - Z_log_var.exp(), -1))
         else:
             condition = self.sdm.inverse(x, batch)
 
-        # t ~ U(0, 1)
-        t = torch.rand((batch_size, 1), device=x.device).to(x.device)
+        if self.global_step <= 1000: # this step is added to kickstart convergence
+            t = 0.1*torch.ones((batch_size, 1), device=x.device).to(x.device)
+        else:
+            # t ~ U(0, 1)
+            t = torch.rand((batch_size, 1), device=x.device).to(x.device)
 
         # p_0t(x) = N(μ, σ) = q(\tilde{x} | x) 
         mean, std = self.pdm.marginal_prob_params(x, t, batch, condition)
@@ -441,9 +506,10 @@ class PointScoreDiffusion(pl.LightningModule):
         loss = loss.mean()
 
         if self.lambda_kld > 0:
-            loss += self.lambda_kld * kld
+            kld = self.lambda_kld * kld
+            loss += kld
 
-        return loss
+        return loss, kld
 
     def latent_diffusion_loss(self, train_batch, batch_idx):
         """This method computes the loss for the latent diffusion phase (training of LTN) of the PointScoreDiffusion model.
@@ -510,15 +576,19 @@ class PointScoreDiffusion(pl.LightningModule):
 
         Source: https://github.com/Gabe-YHLee/IRVAE-public
         """
-
         bs = z.size(0)
         z_dim = z.size(1)
+
+        # from gembed.vis import plot_objects
+        # plot_objects((func(z)[0].cpu(), None))
 
         # z ~ interp([z_1-b_1, z_2+b_2]), with z_1, z_2 ∈ batch 
         # if true sample z using linear (inter/extra)polation
         if augment_z:
             assert bs > 1, "can not use Z augmentation if bs < 2"
             z_permuted = z[torch.randperm(bs)]
+            #z_permuted = z[torch.arange(bs).roll(1, 0)] # batch is shuffled so we can interpolate between consecutive samples
+
             alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
             z_augmented = alpha * z + (1 - alpha) * z_permuted
 
@@ -540,8 +610,47 @@ class PointScoreDiffusion(pl.LightningModule):
 
         return TrG2 / TrG**2
 
+    # def _relaxed_distortion_measure(self, func, z, eta=0.2, augment_z=True):
+    #     eta = 0
+    #     bs = z.size(0)
+    #     z_dim = z.size(1)
+
+    #     # from gembed.vis import plot_objects
+    #     # plot_objects((func(z)[0].cpu(), torch.arange(1024)))
+
+    #     # z ~ interp([z_1-b_1, z_2+b_2]), with z_1, z_2 ∈ batch 
+    #     # if true sample z using linear (inter/extra)polation
+    #     if augment_z:
+    #         assert bs > 1, "can not use Z augmentation if bs < 2"
+    #         z_permuted = z[torch.randperm(bs)]
+    #         #z_permuted = z[torch.arange(bs).roll(1, 0)] # batch is shuffled so we can interpolate between consecutive samples
+    #         alpha = (torch.rand(bs) * (1 + 2 * eta) - eta).unsqueeze(1).to(z)
+    #         z_augmented = alpha * z + (1 - alpha) * z_permuted
+
+    #     else:
+    #         z_augmented = z
+
+    #     # from gembed.vis import plot_objects
+    #     # plot_objects((func(z_augmented)[0].cpu(), torch.arange(1024)))
+
+    #     # loss
+    #     v = torch.randn(bs, z_dim).to(z_augmented)
+
+    #     # loss
+    #     X, Jv = (
+    #         torch.autograd.functional.jvp(func, z_augmented, v=v, create_graph=True)
+    #     ) # bs num_pts 3
+
+    #     Jv_sq_norm = torch.einsum('nij,nij->n', Jv, Jv)
+
+    #     TrG = Jv_sq_norm.mean()
+    #     fm_loss = torch.mean((Jv_sq_norm - (torch.sum(v**2, dim=1)) * TrG/z_dim)**2)
+
+    #     return fm_loss.sum()
+
+
     def latent_metric_loss(
-        self, train_batch, batch_idx, n_samples=100, lambda_reg=1e-1
+        self, train_batch, batch_idx, n_samples=1024, lambda_reg=1e-1,
     ):
         """Compute the total loss, reconstruction loss, and distortion loss for the latent metric learning.
 
@@ -554,6 +663,7 @@ class PointScoreDiffusion(pl.LightningModule):
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Total loss, reconstruction loss, and distortion measure.
         """
+        self.stn.eval(), self.sdm.eval(), self.pdm.eval() # this is required to prevent shifting BN statistics
 
         x, batch = train_batch.pos, train_batch.batch
 
@@ -588,21 +698,27 @@ class PointScoreDiffusion(pl.LightningModule):
         f_generator = lambda z: self.forward(
             Z=self.mtn.forward(z),
             apply_pdm=True,
-            time_steps=6,
+            apply_ltn=False,
+            time_steps=15,
             z=z_template,
             batch=batch,
-        )[1].view(z.shape[0], -1, 3)
+        )[1].view(z.shape[0], -1)#.view(z.shape[0], -1, 3)
 
-        metric_loss = (
-            lambda_reg
-            * self._relaxed_distortion_measure(f_generator, Z_metric, augment_z=True).mean()
-        )
+        if self.global_step <= 200:
+           metric_loss = torch.tensor(0.)
+        else:
+            metric_loss = (
+                lambda_reg
+                * self._relaxed_distortion_measure(f_generator, Z_metric, augment_z=True).mean()
+            )
+
+        # stabilizing loss 1/d * ||z||_2^2
+        stab_loss = 1e-4*Z_metric.pow(2).mean(-1).mean(-1)
 
         # TOTAL LOSS
-        loss = rec_loss + metric_loss
+        loss = rec_loss + metric_loss + stab_loss
 
         return loss, rec_loss, metric_loss
-
 
     def training_step(self, train_batch, batch_idx):
         """Training step for the PyTorch Lightning module based on the current training phase.
@@ -616,9 +732,14 @@ class PointScoreDiffusion(pl.LightningModule):
 
         """
 
-        if self.phase == Phase.TRAIN_POINT_DIFFUSION:
-            loss = self.point_diffusion_loss(train_batch, batch_idx)
+        if self.phase == Phase.TRAIN_SPATIAL_TRANSFORMER:
+            loss = self.spatial_transformer_loss(train_batch, batch_idx)
+            self.log("train_stn_loss", loss, batch_size=train_batch.num_graphs)
+
+        elif self.phase == Phase.TRAIN_POINT_DIFFUSION:
+            loss, kld = self.point_diffusion_loss(train_batch, batch_idx)
             self.log("train_point_loss", loss, batch_size=train_batch.num_graphs)
+            self.log("train_point_kld", kld, batch_size=train_batch.num_graphs)
 
         elif self.phase == Phase.TRAIN_LATENT_DIFFUSION:
             loss = self.latent_diffusion_loss(train_batch, batch_idx)
@@ -636,7 +757,7 @@ class PointScoreDiffusion(pl.LightningModule):
         return loss
 
     # VALIDATION STEP
-    def latent_metric_validation_loss(self, train_batch, batch_idx, n_cps=6, n_samples=8000):
+    def latent_metric_validation_loss(self, train_batch, batch_idx, n_cps=6, n_samples=1024):
         """Compute the geodesic energy and reconstruction error for the latent metric learning during validation.
 
         Args:
@@ -655,48 +776,47 @@ class PointScoreDiffusion(pl.LightningModule):
         if self.stn is not None:
             x = self.stn(x, batch)
 
-        with torch.no_grad():
-            # start and end of interpolation in latent space: [C*_0, C*_T]
-            C = self.sdm.inverse(x, batch)
+        #with torch.no_grad():
+        # start and end of interpolation in latent space: [C*_0, C*_T]
+        C = self.sdm.inverse(x, batch)
 
-            # start and end of interpolation in metric space: [Z_0, Z_T]
-            Z = self.mtn.inverse(C)
+        # start and end of interpolation in metric space: [Z_0, Z_T]
+        Z = self.mtn.inverse(C)
 
-            # interpolation in metric space: [Z_0, Z_1, ..., Z_T]
-            Z_interp = torch.lerp(
-                input=Z[:1],
-                end=Z[1:],
-                weight=torch.linspace(0, 1, n_cps)[:, None].to(x.device),
-            )
+        # interpolation in metric space: [Z_0, Z_1, ..., Z_T]
+        Z_interp = torch.lerp(
+            input=Z[:1],
+            end=Z[1:],
+            weight=torch.linspace(0, 1, n_cps)[:, None].to(x.device),
+        )
 
-            # interpolationin latent space [C_0, C_1, ..., C_T]
-            C_interp = self.mtn.forward(Z_interp)
-            reconstruction_error = (C - C_interp[[0, -1]]).pow(2).mean(-1)
+        # interpolationin latent space [C_0, C_1, ..., C_T]
+        C_interp = self.mtn.forward(Z_interp)
+        reconstruction_error = (C - C_interp[[0, -1]]).pow(2).mean(-1)
 
-            # replace start and end point by known point 
-            C_interp = torch.concat([C[:1], C_interp[1:-1], C[1:]])
+        # replace start and end point by known point 
+        C_interp = torch.concat([C[:1], C_interp[1:-1], C[1:]])
 
-            # setup template
-            z_template = 0.8 * torch.randn(n_samples, 3).repeat(n_cps, 1).to(x)
-            batch_template = (
-                torch.concat([i * torch.ones(n_samples) for i in range(n_cps)]).to(x).long()
-            )
+        # setup template
+        z_template = 0.8 * torch.randn(n_samples, 3).repeat(n_cps, 1).to(x)
+        batch_template = (
+            torch.concat([i * torch.ones(n_samples) for i in range(n_cps)]).to(x).long()
+        )
 
-            # generate interpolated shapes
-            Xs = self.forward(
-                Z=C_interp,
-                apply_pdm=True,
-                time_steps=10,
-                n_samples=8000,  
-                z=z_template,
-                batch=batch_template,
-            )[1].view(n_cps, -1, 3)
+        # generate interpolated shapes
+        Xs = self.forward(
+            Z=C_interp,
+            apply_pdm=True,
+            time_steps=10,
+            z=z_template,
+            batch=batch_template,
+        )[1].view(n_cps, -1, 3)
 
-            # E(γ) = 0.5 * (∫g(γ˙(t), γ˙(t))) dt
-            delta_t = 1 / (n_cps - 1)
-            geodesic_energy = (
-                0.5 * (Xs[:-1] - Xs[1:]).pow(2).sum(-1).mean(-1).div(delta_t).sum()
-            )
+        # E(γ) = 0.5 * (∫g(γ˙(t), γ˙(t))) dt
+        delta_t = 1 / (n_cps - 1)
+        geodesic_energy = (
+            0.5 * (Xs[:-1] - Xs[1:]).pow(2).sum(-1).mean(-1).div(delta_t).sum()
+        )
 
         return geodesic_energy, reconstruction_error
 
@@ -711,7 +831,11 @@ class PointScoreDiffusion(pl.LightningModule):
             None
         """
 
-        if self.phase == Phase.TRAIN_POINT_DIFFUSION:
+        if self.phase == Phase.TRAIN_SPATIAL_TRANSFORMER:
+            loss = self.spatial_transformer_loss(valid_batch, batch_idx)
+            self.log("valid_stn_loss", loss, batch_size=valid_batch.num_graphs)
+
+        elif self.phase == Phase.TRAIN_POINT_DIFFUSION:
             x, batch = valid_batch.pos, valid_batch.batch
 
             with torch.no_grad():
@@ -727,13 +851,13 @@ class PointScoreDiffusion(pl.LightningModule):
 
             self.log("valid_latent_ll", ll_Z.mean(), batch_size=valid_batch.num_graphs)
 
-        elif self.phase == Phase.TRAIN_METRIC_TRANSFORMER:
-            ge, re = self.latent_metric_validation_loss(valid_batch, batch_idx)
-            self.log(
-                "valid_metric_geodesic", ge.mean(), batch_size=valid_batch.num_graphs
-            )
-            self.log(
-                "valid_metric_reconstruction",
-                re.mean(),
-                batch_size=valid_batch.num_graphs,
-            )
+        # elif self.phase == Phase.TRAIN_METRIC_TRANSFORMER:
+        #     ge, re = self.latent_metric_validation_loss(valid_batch, batch_idx)
+        #     self.log(
+        #         "valid_metric_geodesic", ge.mean(), batch_size=valid_batch.num_graphs
+        #     )
+        #     self.log(
+        #         "valid_metric_reconstruction",
+        #         re.mean(),
+        #         batch_size=valid_batch.num_graphs,
+        #     )

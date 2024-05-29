@@ -2,9 +2,14 @@ import torch
 import torch_geometric.nn as tgnn
 from gembed.core.module.nn.residual import ResidualCoefficient
 from gembed.core.module.nn.spectral import FourierFeatureMap
-from gembed.core.module.nn.fusion import (ConcatFuse, ConcatSquash, HyperConcatSquash,
-                              LinearCombination)
+from gembed.core.module.nn.fusion import (
+    ConcatFuse,
+    ConcatSquash,
+    HyperConcatSquash,
+    LinearCombination,
+)
 import torch.nn as nn
+import numpy as np
 
 class ResidualPointConditionalDynamics(nn.Module):
     """The `ResidualPointConditionalDynamics` class is a neural network module that models the conditional
@@ -22,10 +27,13 @@ class ResidualPointConditionalDynamics(nn.Module):
         hyper_hidden_dim,
         hidden_dim,
         t_dim,
+        mlp_dim,
         layer_type,
-        activation_type 
+        activation_type,
     ):
         super().__init__()
+
+        self.activation_type = activation_type
 
         # small scale = large kernel (underfitting)
         # large scale = small kernel (overfitting)
@@ -59,16 +67,26 @@ class ResidualPointConditionalDynamics(nn.Module):
                 assert False
 
         def activation():
-            if activation_type == "tanh":
+            if self.activation_type == "sin":
+                return torch.sin
+            elif self.activation_type == "selu":
+                return nn.SELU()
+            elif self.activation_type == "tanh":
                 return nn.Tanh()
-            elif activation_type == "tanhshrink":
+            elif self.activation_type == "tanhshrink":
                 return nn.Tanhshrink()
-            elif activation_type == "softplus":
+            elif self.activation_type == "softplus":
                 return nn.Softplus()
-            elif activation_type == "swish":
+            elif self.activation_type == "swish":
                 return nn.SiLU()
+            elif self.activation_type == "elu":
+                return nn.ELU()
+            elif self.activation_type == "relu":
+                return nn.ReLU()
             else:
                 assert False
+
+        self.nn_x = layer(hidden_dim, hidden_dim)
 
         # hidden layers
         self.layers = nn.ModuleList(
@@ -76,12 +94,14 @@ class ResidualPointConditionalDynamics(nn.Module):
                 tgnn.Sequential(
                     "x, c, t, batch",
                     [
+                        (activation(), "x -> x"),
+                        nn.BatchNorm1d(hidden_dim),
                         (
                             layer(hidden_dim, hidden_dim),
                             "x, c, t, batch -> x",
                         ),
-                        nn.LayerNorm(hidden_dim),
                         activation(),
+                        nn.BatchNorm1d(hidden_dim),
                         (
                             layer(hidden_dim, hidden_dim),
                             "x, c, t, batch -> x",
@@ -99,24 +119,21 @@ class ResidualPointConditionalDynamics(nn.Module):
             [
                 # # L1
                 (
-                    layer(hidden_dim, hidden_dim),
+                    layer(hidden_dim, mlp_dim[0]),
                     "x,c,t,batch -> x",
                 ),
-                nn.LayerNorm(hidden_dim),
                 activation(),
                 # L2
                 (
-                    layer(hidden_dim, hidden_dim),
+                    layer(mlp_dim[0], mlp_dim[1]),
                     "x,c,t,batch -> x",
                 ),
-                (nn.LayerNorm(hidden_dim), "x -> x"),
                 activation(),
                 # L3
                 (
-                    layer(hidden_dim, out_channels),
+                    layer(mlp_dim[1], out_channels),
                     "x,c,t,batch -> x",
                 ),
-                ResidualCoefficient(),
             ],
         )
 
@@ -127,8 +144,13 @@ class ResidualPointConditionalDynamics(nn.Module):
         # prep input
         x, t = self.ffm_x(x), self.ffm_t(t)
 
-        for f in self.layers:
-            x = x + f(x, c, t, batch=batch)
+        for i, f in enumerate(self.layers):
+            if i == 0: 
+                x = x + f(self.nn_x(x, c, t, batch=batch), c, t, batch=batch)
+            else:
+                x = x + f(x, c, t, batch=batch)
 
         # return velocity
         return self.regression(x, c, t, batch=batch)
+
+

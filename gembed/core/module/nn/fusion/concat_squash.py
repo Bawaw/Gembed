@@ -28,11 +28,9 @@ class ConcatSquash(nn.Module):
         if hyper_bias is None:
             self.hyper_bias = nn.Sequential(
                 nn.Linear(self.t_dim, self.hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Linear(self.hidden_dim, self.hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Linear(self.hidden_dim, self.out_dim),
             )
         else:
@@ -41,11 +39,9 @@ class ConcatSquash(nn.Module):
         if hyper_gate is None:
             self.hyper_gate = nn.Sequential(
                 nn.Linear(self.t_dim, self.hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Linear(self.hidden_dim, self.hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Linear(self.hidden_dim, self.out_dim),
             )
         else:
@@ -60,7 +56,7 @@ class ConcatSquash(nn.Module):
         n_batch = batch.max() + 1
 
         # get weight matrices
-        a = torch.sigmoid(self.hyper_gate(t.view(n_batch, self.t_dim)))
+        a = self.hyper_gate(t.view(n_batch, self.t_dim))
         b = self.hyper_bias(t.view(n_batch, self.t_dim))
 
         # evaluate layer: (a * (x @ W.T)) + b

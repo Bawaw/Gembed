@@ -30,6 +30,10 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
         fourier_feature_scale_x,
         lambda_kld,
         n_components,
+        phase_0_max_steps,
+        phase_1_max_steps,
+        phase_2_max_steps,
+        phase_3_max_steps,
 
         # STN
         stn_fourier_feature_scale,
@@ -38,6 +42,8 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
         stn_activation_type,
         stn_n_components,
         stn_n_hidden_layers,
+        stn_global_pool_dim,
+        stn_mlp_dim,
         use_stn,
         
         # LTN
@@ -62,6 +68,8 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
         sdm_layer_type,
         sdm_activation_type,
         sdm_n_hidden_layers,
+        sdm_global_pool_dim,
+        sdm_mlp_dim,
 
         # PDM
         pdm_activation_type,
@@ -70,6 +78,7 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
         pdm_hidden_dim,
         pdm_hyper_hidden_dim,
         pdm_in_channels,
+        pdm_mlp_dim,
         pdm_layer_type,
         pdm_n_hidden_layers,
         pdm_out_channels,
@@ -77,8 +86,12 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
 
         **kwargs
     ):
-        # NETWORK CONFIG
+        self.n_components = n_components
+        self.phase_0_max_steps, self.phase_1_max_steps, self.phase_2_max_steps, self.phase_3_max_steps = (
+            phase_0_max_steps, phase_1_max_steps, phase_2_max_steps, phase_3_max_steps
+        )
 
+        # NETWORK CONFIG
         # spatial transformer
         if use_stn:
             stn = SpatialTransformer(
@@ -89,6 +102,8 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                     hidden_dim=stn_hidden_dim,
                     layer_type=stn_layer_type,
                     activation_type=stn_activation_type,
+                    global_pool_dim=stn_global_pool_dim,
+                    mlp_dim=stn_mlp_dim,
                 )
             )
 
@@ -118,17 +133,21 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
 
         if use_mtn:
             mtn = EncoderDecoder(
-                    encoder = nn.Sequential(
-                        nn.Linear(n_components, mtn_hidden_dim),
-                        nn.SiLU(),
-                        nn.Linear(mtn_hidden_dim, mtn_n_components),
-                    ),
-                    decoder = nn.Sequential(
-                        nn.Linear(mtn_n_components, mtn_hidden_dim),
-                        nn.SiLU(),
-                        nn.Linear(mtn_hidden_dim, n_components),
-                    )
+                encoder = nn.Sequential(
+                    nn.Linear(n_components, mtn_hidden_dim),
+                    nn.Tanh(),
+                    nn.Linear(mtn_hidden_dim, mtn_n_components),
+                    nn.Tanh(),
+                    nn.Linear(mtn_n_components, mtn_n_components),
+                ),
+                decoder = nn.Sequential(
+                    nn.Linear(mtn_n_components, mtn_hidden_dim),
+                    nn.Tanh(),
+                    nn.Linear(mtn_hidden_dim, mtn_hidden_dim),
+                    nn.Tanh(),
+                    nn.Linear(mtn_hidden_dim, n_components),
                 )
+            )
 
         else:
             mtn = None
@@ -142,8 +161,11 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                 hidden_dim=sdm_hidden_dim,
                 layer_type=sdm_layer_type,
                 activation_type=sdm_activation_type,
+                global_pool_dim=sdm_global_pool_dim,
+                mlp_dim=sdm_mlp_dim,
             ),
             add_log_var_module=lambda_kld > 0,
+            batch_norm_mean=False
         )
 
         # point distribution model
@@ -161,6 +183,7 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                 hyper_hidden_dim=pdm_hyper_hidden_dim,
                 hidden_dim=pdm_hidden_dim,
                 t_dim=pdm_t_dim,
+                mlp_dim=pdm_mlp_dim,
                 layer_type=pdm_layer_type,
                 activation_type=pdm_activation_type,
             ),
@@ -185,39 +208,84 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
 
         checkpoint_path = os.path.join(tb_logger.log_dir, "checkpoints")
 
+        # TRAIN SPATIAL TRANSFORMER NETWORK
+        self.set_phase(Phase.TRAIN_SPATIAL_TRANSFORMER)
+        
+        if self.stn is not None:
+            # setup trainer
+            ckpt_intermediate_saves = ModelCheckpoint(
+                save_top_k=-1,
+                monitor="train_stn_loss",
+                dirpath=checkpoint_path,
+                every_n_train_steps=int(self.phase_0_max_steps/10),
+                filename="phase_0_intermediate_ckpt_{step}_{train_stn_loss:.6f}",
+            )
+
+            trainer = pl.Trainer(
+                logger=tb_logger,
+                accelerator="gpu",
+                devices=[0],
+                max_steps=int(self.phase_0_max_steps),
+                val_check_interval=int(self.phase_0_max_steps/100),
+                check_val_every_n_epoch=None,
+                callbacks=[ckpt_intermediate_saves],
+                log_every_n_steps=1,
+                limit_val_batches=3,
+                gradient_clip_val=1e-3,
+                gradient_clip_algorithm="norm",
+            )
+
+            # fit point diffusion model
+            trainer.fit(
+                model=self,
+                train_dataloaders=train_loader,
+                val_dataloaders=valid_loader,
+                ckpt_path = f"/home/bcroqu0/projects/gembed/models/weights/{model_name}/score_diffusion/version_6/checkpoints/phase_0_final_model.ckpt"
+            )
+
+            # save point diffusion model
+            trainer.save_checkpoint(
+                os.path.join(
+                    tb_logger.log_dir, "checkpoints", "phase_0_final_model.ckpt"
+                )
+            )
+
         # TRAIN POINT DIFFUSION
         self.set_phase(Phase.TRAIN_POINT_DIFFUSION)
-        
+
         # setup trainer
         ckpt_intermediate_saves = ModelCheckpoint(
             save_top_k=-1,
             monitor="train_point_loss",
             dirpath=checkpoint_path,
-            every_n_train_steps=int(2e4),
-            filename="phase_1_intermediate_ckpt_{step}_{train_point_loss:.2f}",
+            every_n_train_steps=int(self.phase_1_max_steps/10),
+            filename="phase_min_1_intermediate_ckpt_{step}_{train_point_loss:.2f}",
         )
 
         trainer = pl.Trainer(
             logger=tb_logger,
             accelerator="gpu",
             devices=[0],
-            max_steps=int(2e5),
-            val_check_interval=1000,
+            max_steps=int(self.phase_1_max_steps),
+            val_check_interval=int(self.phase_1_max_steps/100),
             check_val_every_n_epoch=None,
             callbacks=[ckpt_intermediate_saves],
             log_every_n_steps=1,
+            limit_val_batches=3,
             gradient_clip_val=1e-3,
             gradient_clip_algorithm="norm",
         )
+
 
         # fit point diffusion model
         trainer.fit(
             model=self,
             train_dataloaders=train_loader,
             val_dataloaders=valid_loader,
+            ckpt_path = f"/home/bcroqu0/projects/gembed/models/weights/{model_name}/score_diffusion/version_6/checkpoints/phase_1_final_model.ckpt"
         )
 
-        # save point diffusion model
+        # # # save point diffusion model
         trainer.save_checkpoint(
             os.path.join(
                 tb_logger.log_dir, "checkpoints", "phase_1_final_model.ckpt"
@@ -225,46 +293,49 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
         )
 
         # TRAIN LATENT DIFFUSION
-        self.set_phase(Phase.TRAIN_LATENT_DIFFUSION)
+        # self.set_phase(Phase.TRAIN_LATENT_DIFFUSION)
 
-        if self.ltn is not None:
-            # setup trainer
-            ckpt_intermediate_saves = ModelCheckpoint(
-                save_top_k=-1,
-                monitor="train_latent_loss",
-                dirpath=checkpoint_path,
-                every_n_train_steps=int(5e3),
-                filename="phase_2_intermediate_ckpt_{step}_{train_latent_loss:.2f}",
-            )
+        
+        # if self.ltn is not None:
+        #     # setup trainer
+        #     ckpt_intermediate_saves = ModelCheckpoint(
+        #         save_top_k=-1,
+        #         monitor="train_latent_loss",
+        #         dirpath=checkpoint_path,
+        #         every_n_train_steps=int(self.phase_2_max_steps/10),
+        #         filename="phase_2_intermediate_ckpt_{step}_{train_latent_loss:.2f}",
+        #     )
 
-            trainer = pl.Trainer(
-                logger=tb_logger,
-                accelerator="gpu",
-                devices=[0],
-                max_steps=int(5e4),
-                val_check_interval=500,
-                check_val_every_n_epoch=None,
-                log_every_n_steps=1,
-                callbacks=[ckpt_intermediate_saves],
-                gradient_clip_val=1e-3,
-                gradient_clip_algorithm="norm",
-            )
+        #     trainer = pl.Trainer(
+        #         logger=tb_logger,
+        #         accelerator="gpu",
+        #         devices=[0],
+        #         max_steps=int(self.phase_2_max_steps),
+        #         val_check_interval=int(self.phase_2_max_steps/100),
+        #         check_val_every_n_epoch=None,
+        #         log_every_n_steps=1,
+        #         limit_val_batches=3,
+        #         callbacks=[ckpt_intermediate_saves],
+        #         gradient_clip_val=1e-3,
+        #         gradient_clip_algorithm="norm",
+        #     )
 
-            # fit latent diffusion model
-            trainer.fit(
-                model=self,
-                train_dataloaders=train_loader,
-                val_dataloaders=valid_loader,
-            )
+        #     # fit latent diffusion model
+        #     trainer.fit(
+        #         model=self,
+        #         train_dataloaders=train_loader,
+        #         val_dataloaders=valid_loader,
+        #         #ckpt_path = f"/home/bcroqu0/projects/gembed/models/weights/{model_name}/score_diffusion/version_88/checkpoints/phase_2_final_model.ckpt"
+        #     )
 
-            # save latent diffusion model
-            trainer.save_checkpoint(
-                os.path.join(
-                    tb_logger.log_dir, "checkpoints", "phase_2_final_model.ckpt"
-                )
-            )
+        #     # save latent diffusion model
+        #     trainer.save_checkpoint(
+        #         os.path.join(
+        #             tb_logger.log_dir, "checkpoints", "phase_2_final_model.ckpt"
+        #         )
+        #     )
 
-        # TRAIN METRIC TRANSFORMER
+        # # TRAIN METRIC TRANSFORMER
         self.set_phase(Phase.TRAIN_METRIC_TRANSFORMER)
 
         # setup trainer
@@ -273,7 +344,7 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                 save_top_k=-1,
                 monitor="train_metric_loss",
                 dirpath=checkpoint_path,
-                every_n_train_steps=int(2e3),
+                every_n_train_steps=int(self.phase_3_max_steps/10),
                 filename="phase_3_intermediate_ckpt_{step}_{train_metric_loss:.2f}",
             )
 
@@ -281,10 +352,11 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                 logger=tb_logger,
                 accelerator="gpu",
                 devices=[0],
-                max_steps=int(2e4),
-                val_check_interval=200,
+                max_steps=int(self.phase_3_max_steps),
+                val_check_interval=int(self.phase_3_max_steps/100),
                 check_val_every_n_epoch=None,
                 log_every_n_steps=1,
+                limit_val_batches=3,
                 callbacks=[ckpt_intermediate_saves],
                 gradient_clip_val=1e-3,
                 gradient_clip_algorithm="norm",
@@ -295,6 +367,7 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
                 model=self,
                 train_dataloaders=train_loader,
                 val_dataloaders=valid_loader,
+                #ckpt_path = f"/home/bcroqu0/projects/gembed/models/weights/{model_name}/score_diffusion/version_29/checkpoints/phase_1_final_model.ckpt"
             )
 
             # save metric transformer model
@@ -324,7 +397,9 @@ class PointScoreDiffusionModel(PointScoreDiffusion, ModelProtocol):
             if not os.path.exists(model_path):
                 model_path = glob(
                     f"{root_dir}/{model_name}/score_diffusion/version_{version}/checkpoints/phase_*_intermediate_ckpt_*_*.ckpt"
-                )[-1]
+                )
+                model_path.sort(key=lambda x: int(x.split("step=")[-1].split("_")[0]))
+                model_path = model_path[-1]
 
             print(f"Loading experiment: {model_name}, from path: {model_path}")
             model = PointScoreDiffusionModel.load_from_checkpoint(
