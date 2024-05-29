@@ -9,10 +9,13 @@ from gembed.vis import plot_objects
 from gembed.stats import frechet_mean
 from torch_scatter import scatter_mean
 from gembed.stats.geodesic import discrete_geodesic
-from helper import load_experiment, pathcat, PYVISTA_SAVE_KWARGS, PYVISTA_PLOT_KWARGS
+from helper import load_experiment, pathcat, pyvista_save_kwargs, pyvista_plot_kwargs, get_plot_cdim
 
 def plot_results(Xs, X_hat_dict, file_path=None):
     if file_path is None:
+        PYVISTA_PLOT_KWARGS = pyvista_plot_kwargs(EXPERIMENT_NAME)
+        cdim = get_plot_cdim(EXPERIMENT_NAME)
+
         Xs = [(X.cpu(), None) for X in Xs]
 
         for k in X_hat_dict.keys():
@@ -20,6 +23,8 @@ def plot_results(Xs, X_hat_dict, file_path=None):
 
         plot_objects(*Xs, **PYVISTA_PLOT_KWARGS)
     else:
+        PYVISTA_SAVE_KWARGS = pyvista_save_kwargs(EXPERIMENT_NAME)
+        cdim = get_plot_cdim(EXPERIMENT_NAME)
 
         os.makedirs(file_path, exist_ok=True)
         for i, X in enumerate(Xs):
@@ -124,7 +129,7 @@ def riemannian_latent_space_atlas(model, T_sample, f_refine, Zs, z_template, n_r
     return X_hat
 
 
-def main(model, T_sample, f_refine, dataset, n_random_point_samples=8192, device="cpu", file_path=None, n_refinement_steps=6):
+def run(model, T_sample, f_refine, dataset, n_random_point_samples=8192, device="cpu", file_path=None, n_refinement_steps=6):
     pl.seed_everything(42, workers=True)
 
     T_norm = tgt.NormalizeScale()
@@ -159,13 +164,19 @@ def main(model, T_sample, f_refine, dataset, n_random_point_samples=8192, device
     plot_results(dataset, X_hats, file_path)
 
 
-if __name__ == "__main__":
+def main():
     import sys
 
     (
-        model, T_sample, f_refine, template, train, valid, test, device, file_path
+        experiment_name, model, T_sample, f_refine, template, train, valid, test, device, file_path
      ) = load_experiment(sys.argv[1:])
+
+    global EXPERIMENT_NAME 
+    EXPERIMENT_NAME = experiment_name
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
-    main(model, T_sample, f_refine, train[:3], device=device, file_path=file_path)
+    run(model, T_sample, f_refine, train[:3], device=device, file_path=file_path)
+
+if __name__ == "__main__":
+    main()

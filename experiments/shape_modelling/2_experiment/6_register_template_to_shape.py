@@ -6,7 +6,9 @@ import lightning as pl
 import torch_geometric.transforms as tgt
 
 from gembed.vis import plot_objects
-from helper import load_experiment, pathcat, PYVISTA_SAVE_KWARGS, PYVISTA_PLOT_KWARGS
+from gembed.utils.transforms.subset_sample import SubsetSample
+
+from helper import load_experiment, pathcat, pyvista_save_kwargs, pyvista_plot_kwargs, get_registration_cdim
 
 def plot_result(template, target, registered_template, refined_registered_template, scalars, file_path, plot_mesh_as_surface=False):
     # remove mesh information
@@ -16,29 +18,30 @@ def plot_result(template, target, registered_template, refined_registered_templa
         del registered_template.face
         del refined_registered_template.face
 
+
     if file_path is None:
-        kwargs = PYVISTA_PLOT_KWARGS
-        kwargs["cmap"] = "prism"
+        PYVISTA_PLOT_KWARGS = pyvista_plot_kwargs(EXPERIMENT_NAME)
+        PYVISTA_PLOT_KWARGS["cmap"] = "prism"
 
         plot_objects(
             (template.cpu(), scalars),
             (target.cpu(), None),
             (registered_template.cpu(), scalars),
             (refined_registered_template.cpu(), scalars),
-            snapshot_file_name=file_path, **kwargs)
+            snapshot_file_name=file_path, **PYVISTA_PLOT_KWARGS)
 
     else:
-        kwargs = PYVISTA_SAVE_KWARGS
-        kwargs["cmap"] = "prism"
+        PYVISTA_SAVE_KWARGS = pyvista_save_kwargs(EXPERIMENT_NAME)
+        PYVISTA_SAVE_KWARGS["cmap"] = "prism"
 
         os.makedirs(file_path, exist_ok=True)
-        plot_objects((template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "template.png"), **kwargs)
-        plot_objects((target.cpu(), None), snapshot_file_name=pathcat(file_path, "target.png"), **kwargs)
-        plot_objects((registered_template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "registered_template.png"), **kwargs)
-        plot_objects((refined_registered_template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "refined_registered_template.png"), **kwargs)
+        plot_objects((template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "template.png"), **PYVISTA_SAVE_KWARGS)
+        plot_objects((target.cpu(), None), snapshot_file_name=pathcat(file_path, "target.png"), **PYVISTA_SAVE_KWARGS)
+        plot_objects((registered_template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "registered_template.png"), **PYVISTA_SAVE_KWARGS)
+        plot_objects((refined_registered_template.cpu(), scalars), snapshot_file_name=pathcat(file_path, "refined_registered_template.png"), **PYVISTA_SAVE_KWARGS)
 
 
-def main(
+def run(
     model,
     T_sample,
     f_refine,
@@ -76,7 +79,8 @@ def main(
     else:
         template_processed = template.clone().to(device)
 
-    scalars_template = template_processed.pos[:, 1].cpu()
+    # pick a color scheme best suited for the shape
+    scalars_template = template_processed.pos[:, get_registration_cdim(EXPERIMENT_NAME)].cpu()
 
     z_template = model.pdm_inverse(
         x=template_processed.pos,
@@ -120,16 +124,22 @@ def main(
                     pathcat(file_path, str(data.id)), plot_mesh_as_surface)
 
 
-if __name__ == "__main__":
+def main():
     import sys
 
     (
-        model, T_sample, f_refine, template, train, valid, test, device, file_path
+        experiment_name, model, T_sample, f_refine, template, train, valid, test, device, file_path
      ) = load_experiment(sys.argv[1:])
+
+    global EXPERIMENT_NAME 
+    EXPERIMENT_NAME = experiment_name
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
     with torch.no_grad():
-        main(model, T_sample, f_refine, train[:5], template, device=device, file_path=pathcat(file_path, "train"))
-        main(model, T_sample, f_refine, valid[:5], template, device=device, file_path=pathcat(file_path, "valid"))
-        main(model, T_sample, f_refine, test[:5], template, device=device, file_path=pathcat(file_path, "test"))
+        run(model, T_sample, f_refine, train[:5], template, device=device, file_path=pathcat(file_path, "train"))
+        run(model, T_sample, f_refine, valid[:5], template, device=device, file_path=pathcat(file_path, "valid"))
+        run(model, T_sample, f_refine, test[:5], template, device=device, file_path=pathcat(file_path, "test"))
+
+if __name__ == "__main__":
+    main()

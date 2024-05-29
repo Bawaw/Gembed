@@ -18,20 +18,20 @@ def plot_result(Zs, file_path):
         umap=False,
     )
 
-def plot_latent_space(Zs, file_path):
+def plot_latent_space(model, Zs, file_path):
     plot_result(Zs.cpu(), file_path)
 
-def plot_normalised_space(Zs, file_path):
+def plot_normalised_space(model, Zs, file_path):
     Zs_norm = torch.concat([model.ltn.inverse(Z) for Z in Zs.unsqueeze(1)]).cpu()
 
     plot_result(Zs_norm, file_path)
 
-def plot_metricised_space(Zs, file_path):
+def plot_metricised_space(model, Zs, file_path):
     Zs_metric = torch.concat([model.mtn.inverse(Z) for Z in Zs.unsqueeze(1)]).cpu()
 
     plot_result(Zs_metric, file_path)
 
-def main(
+def run(
     model,
     T_sample,
     dataset,
@@ -60,18 +60,28 @@ def main(
     )
 
     # plot
-    plot_latent_space(Zs, pathcat(file_path, "latent_space.svg"))
-    #plot_normalised_space(Zs, pathcat(file_path, "normalised_space.svg"))
-    plot_metricised_space(Zs, pathcat(file_path, "metricised_space.svg"))
+    if file_path is not None:
+        os.makedirs(file_path, exist_ok=True)
+    plot_latent_space(model, Zs, pathcat(file_path, "latent_space.svg"))
+    if model.ltn is not None:
+        plot_normalised_space(model, Zs, pathcat(file_path, "normalised_space.svg"))
+    if model.mtn is not None:
+        plot_metricised_space(model, Zs, pathcat(file_path, "metricised_space.svg"))
 
-if __name__ == "__main__":
+def main():
     import sys
 
     (
-        model, T_sample, f_refine, template, train, valid, test, device, file_path
+        experiment_name, model, T_sample, f_refine, template, train, valid, test, device, file_path
      ) = load_experiment(sys.argv[1:])
+
+    global EXPERIMENT_NAME 
+    EXPERIMENT_NAME = experiment_name
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
     with torch.no_grad():
-        main(model, T_sample, train + valid + test, device=device, file_path=pathcat(file_path, "complete_dataset"))
+        run(model, T_sample, train, device=device, file_path=pathcat(file_path, "train"))
+
+if __name__ == "__main__":
+    main()

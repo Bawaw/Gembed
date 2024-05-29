@@ -7,51 +7,61 @@ import lightning as pl
 import torch_geometric.transforms as tgt
 
 from gembed.vis import Plotter
-from helper import load_experiment, pathcat, PYVISTA_SAVE_KWARGS, PYVISTA_PLOT_KWARGS
+from helper import load_experiment, pathcat, pyvista_save_kwargs, pyvista_plot_kwargs, get_plot_cdim
 from gembed.utils.transforms import RandomRotation, RandomTranslation
 
-def _plot(data_set, file_name):
-    os.makedirs(file_path, exist_ok=True)
+def _plot(data_samples, file_path):
+    PYVISTA_SAVE_KWARGS = pyvista_save_kwargs(EXPERIMENT_NAME)
+    PYVISTA_SAVE_KWARGS["cmap"] = "tab10"
 
-    plotter = Plotter()
-    for data in data_set:
-        plotter.add_generic(d, **PYVISTA_save_KWARGS)
+    plotter = Plotter(off_screen=True) 
+    plotter.camera_position = PYVISTA_SAVE_KWARGS.pop("camera_position")
 
-    plotter.screenshot(file_name, transparent_background=True)
+    for i, d in enumerate(data_samples):
+        plotter.add_generic(d, scalars=i*torch.ones(d.pos.shape[0]), show_scalar_bar = False, clim=[0, len(data_samples)], **PYVISTA_SAVE_KWARGS)
+
+    plotter.screenshot(file_path, transparent_background=True)
     plotter.close()
 
 def plot_result(results, file_path):
     if file_path is None:
+        PYVISTA_PLOT_KWARGS = pyvista_plot_kwargs(EXPERIMENT_NAME)
+        cdim = get_plot_cdim(EXPERIMENT_NAME)
+
         for identifier, augmented_and_aligned_data in results:
             plotter = Plotter(shape=(1, 2))
-
-            for d, d_aligned in shape_data:
+            plotter.camera_position = PYVISTA_PLOT_KWARGS.pop("camera_position")
+            for i, (d, d_aligned) in enumerate(augmented_and_aligned_data):
                 plotter.subplot(0, 0)
-                plotter.add_generic(d, **PYVISTA_PLOT_KWARGS)
+                plotter.add_generic(d, **PYVISTA_PLOT_KWARGS, scalars=i*torch.ones(d.pos.shape[0]))
 
                 plotter.subplot(0, 1)
-                plotter.add_generic(d_aligned, **PYVISTA_PLOT_KWARGS)
+                plotter.add_generic(d_aligned, **PYVISTA_PLOT_KWARGS, scalars=i*torch.ones(d.pos.shape[0]))
 
             plotter.link_views()
             plotter.show()
     else:
         for identifier, augmented_and_aligned_data in results:
-            augmented_data, algined_data = zip(*results)
-            _plot(augmented_data, pathcat(file_path, f"{identifier}/augmented/"))
-            _plot(aligned_data, pathcat(file_path, f"{identifier}/aligned"))
+            augmented_data, aligned_data = zip(*augmented_and_aligned_data)
+            
+            _file_path = pathcat(file_path, f"{identifier}")
+            os.makedirs(_file_path, exist_ok=True)
+            _plot(augmented_data, pathcat(_file_path, "augmented"))
+            _plot(aligned_data, pathcat(_file_path, "aligned"))
 
 
 
 def quantify_results(results, file_path):
-    # function computes average MSE to the mean shape
-    f_mse = lambda x: (x - x.mean(0)).pow(2).sum(-1).mean(-1)
+    # Σ_Nn [Σ_d(x_i - x_mean)^2] mean over points and number of augmentation samples
+    f_mse = lambda x: (x - x.mean(0)).pow(2).sum(-1).mean().item()
 
     identifiers, augmented_data_mse, aligned_data_mse = [], [], []
     for identifier, augmented_and_aligned_data in results:
-
         identifiers.append(identifier)
-        augmented_data_mse.append(mse(torch.stack([d_aug.pos for d_aug, _ in augmented_and_aligned_data])))
-        aligned_data_mse.append(mse(torch.stack([d_align.pos for _, d_align in augmented_and_aligned_data])))
+
+        # compute and store the average to the mean shape in in augmented and aligned data
+        augmented_data_mse.append(f_mse(torch.stack([d_aug.pos for d_aug, _ in augmented_and_aligned_data])))
+        aligned_data_mse.append(f_mse(torch.stack([d_align.pos for _, d_align in augmented_and_aligned_data])))
 
     df = pd.DataFrame({
         "id" : identifiers,
@@ -59,9 +69,9 @@ def quantify_results(results, file_path):
         "aligned_data_mse" : aligned_data_mse,
     })
 
-    df.to_csv(file_path)
+    df.to_csv(pathcat(file_path, "error_table.csv"))
 
-def main(
+def run(
     model,
     T_sample,
     dataset,
@@ -100,31 +110,31 @@ def main(
                 data_augmented.clone().pos.to(device), batch=None, params=params
             )
 
-            # add raw augmented
+            # [(aug_1, al_1), ...]
             augmented_and_aligned_data.append((data_augmented.to("cpu"), data_aligned.to("cpu")))
 
+        # [id, [(aug_1, al_1), (aug_2, al_2), ...], ... ]
         results.append((data.id, augmented_and_aligned_data))
 
-        # compute and store the average to the mean in in augmented and aligned data
-        results.append((
-            data.id,
-            mse(torch.stack([d_aug.pos for d_aug, _ in augmented_and_aligned_data])),
-            mse(torch.stack([d_align.pos for _, d_align in augmented_and_aligned_data]))
-        ))
+    plot_result(results, file_path)
+    quantify_results(results, file_path)
 
-    plot_result(results)
-    quantify_result(results)
-
-
-if __name__ == "__main__":
-    assert model.stn is not None, "Model does not have STN!"
+def main():
     import sys
 
     (
-        model, T_sample, f_refine, template, train, valid, test, device, file_path
+        experiment_name, model, T_sample, f_refine, template, train, valid, test, device, file_path
      ) = load_experiment(sys.argv[1:])
+
+    global EXPERIMENT_NAME 
+    EXPERIMENT_NAME = experiment_name
+
+    assert model.stn is not None, "Model does not have STN!"
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
     with torch.no_grad():
-        main(model, T_sample, train[:5], device=device, file_path=file_path)
+        run(model, T_sample, test[:5], device=device, file_path=pathcat(file_path, "test"))
+
+if __name__ == "__main__":
+    main()

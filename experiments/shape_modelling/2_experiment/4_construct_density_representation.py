@@ -14,23 +14,45 @@ from matplotlib.collections import LineCollection
 from gembed.utils.adapter import torch_geomtric_data_to_vtk
 
 def plot_result_2D(log_px_grid, data_transformed, intersection_plane, depth, file_path):
-    ax = sns.heatmap(log_px_grid)
+    ax = sns.heatmap(log_px_grid, xticklabels=False, yticklabels=False)
     ax.invert_yaxis()
 
     if hasattr(data_transformed, "face"):
-        mesh = torch_geomtric_data_to_vtk(
-            data_transformed.pos, data_transformed.face
-        )
-        intersection, _, _ = mesh.intersection(intersection_plane)
-        lines = torch.from_numpy(intersection.lines).view(-1, 3)
-        points = log_px_grid.shape[0] * ((intersection.points[:, :2] + 1) / 2)
 
-        intersection_curve = LineCollection(
-            [[points[i], points[j]] for (_, i, j) in lines]
-        )
+        def compute_intersection(data_transformed, intersection_plane, return_dict):
+            mesh = torch_geomtric_data_to_vtk(
+                data_transformed.pos, data_transformed.face
+            )
+            
+            intersection, _, _ = mesh.intersection(intersection_plane)
+            lines = torch.from_numpy(intersection.lines).view(-1, 3)
+            points = log_px_grid.shape[0] * ((intersection.points[:, :2] + 1) / 2)
 
-        # plot mesh grid intersection
-        ax.add_collection(intersection_curve)
+            intersection_curve = LineCollection(
+                [[points[i], points[j]] for (_, i, j) in lines], colors="cornflowerblue", label="GT"
+            )
+
+            return_dict["intersection_curve"] = intersection_curve
+
+        # compute intersection can get stuck so launched in a different process
+        import multiprocessing
+        manager = multiprocessing.Manager()
+        return_dict = manager.dict()
+        p = multiprocessing.Process(target=compute_intersection, name="Intersection", args=(data_transformed, intersection_plane, return_dict))
+        p.start()
+        p.join(240)
+
+        # kill the process
+        p.terminate() 
+        if p.is_alive():
+            p.kill() # if process is still alive force kill it 
+        p.join()
+
+        if "intersection_curve" in return_dict:
+            ax.add_collection(return_dict["intersection_curve"])
+            ax.legend()
+
+        
     else:
         # select thin (determined by atol) slice of point cloud at depth
         mask = torch.isclose(
@@ -58,6 +80,54 @@ def plot_result_2D(log_px_grid, data_transformed, intersection_plane, depth, fil
 
     plt.close()
 
+
+# def plot_result_2D(log_px_grid, data_transformed, intersection_plane, depth, file_path):
+#     ax = sns.heatmap(log_px_grid)
+#     ax.invert_yaxis()
+
+#     if hasattr(data_transformed, "face"):
+#         mesh = torch_geomtric_data_to_vtk(
+#             data_transformed.pos, data_transformed.face
+#         )
+        
+#         intersection, _, _ = mesh.intersection(intersection_plane)
+#         lines = torch.from_numpy(intersection.lines).view(-1, 3)
+#         points = log_px_grid.shape[0] * ((intersection.points[:, :2] + 1) / 2)
+
+#         intersection_curve = LineCollection(
+#             [[points[i], points[j]] for (_, i, j) in lines], colors="cornflowerblue", label="GT"
+#         )
+
+#         # plot mesh grid intersection
+#         ax.add_collection(intersection_curve)
+#         ax.legend()
+#     else:
+#         # select thin (determined by atol) slice of point cloud at depth
+#         mask = torch.isclose(
+#             data_transformed.pos[:, -1], torch.tensor(depth), atol=0.01
+#         )
+#         pc_slice = data_transformed.pos[mask, :-1]
+
+#         # plot volume grid intersection
+#         pc_slice = log_px_grid.shape[0] * ((pc_slice + 1) / 2)  # rescale slice to fit heatmap
+
+#         sns.scatterplot(
+#             x=pc_slice[:, 0],
+#             y=pc_slice[:, 1],
+#             s=1,
+#             marker="s",
+#             linewidth=0,
+#         )
+
+
+#     if file_path is None:
+#         plt.show()
+#     else:
+#         os.makedirs(file_path, exist_ok=True)
+#         ax.get_figure().savefig(pathcat(file_path, "density.png"), bbox_inches="tight", dpi=300)
+
+#     plt.close()
+
 def plot_result_3D(x_grid, log_px, data_transformed, intersection_plane, depth):
     if hasattr(data_transformed, "face"):
         mesh = torch_geomtric_data_to_vtk(
@@ -73,7 +143,7 @@ def plot_result_3D(x_grid, log_px, data_transformed, intersection_plane, depth):
 
         # plot results 3D
         plotter = Plotter()
-        plotter.add_generic(mesh, opacity=1.0)
+        plotter.add_generic(mesh, opacity=0.5)
         plotter.add_generic(intersection_plane, color="black")
         plotter.add_generic(x_grid.cpu(), scalars=log_px.cpu(), cmap="plasma")
         plotter.add_generic(intersection, color="blue")
@@ -96,12 +166,12 @@ def plot_result_3D(x_grid, log_px, data_transformed, intersection_plane, depth):
         plotter.view_xy()
         plotter.show()
 
-def main(
+def run(
     model,
     T_sample,
     dataset,
     depth=0.0,
-    grid_size=256,
+    grid_size=128,
     plane="xy",
     plot_log_px=True,
     device="cpu",
@@ -159,17 +229,23 @@ def main(
         plot_result_2D(log_px_grid, data_transformed, intersection_plane, depth, file_path=pathcat(file_path, str(data.id)))
         #plot_result_3D(x_grid, log_px, data_transformed, intersection_plane, depth)
 
-if __name__ == "__main__":
+def main():
     import sys
 
     (
-        model, T_sample, f_refine, template, train, valid, test, device, file_path
+        experiment_name, model, T_sample, f_refine, template, train, valid, test, device, file_path
      ) = load_experiment(sys.argv[1:])
+
+    global EXPERIMENT_NAME 
+    EXPERIMENT_NAME = experiment_name
 
     file_path = pathcat(file_path, str(os.path.basename(__file__)).split(".")[0])
 
 
     with torch.no_grad():
-        main(model, T_sample, train[:5], device=device, file_path=pathcat(file_path, "train"))
-        main(model, T_sample, valid[:5], device=device, file_path=pathcat(file_path, "valid"))
-        main(model, T_sample, test[:5], device=device, file_path=pathcat(file_path, "test"))
+        run(model, T_sample, train[:5], device=device, file_path=pathcat(file_path, "train"))
+        run(model, T_sample, valid[:5], device=device, file_path=pathcat(file_path, "valid"))
+        run(model, T_sample, test[:5], device=device, file_path=pathcat(file_path, "test"))
+
+if __name__ == "__main__":
+    main()

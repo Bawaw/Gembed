@@ -19,16 +19,69 @@ from gembed.models import PointScoreDiffusionModel
 from gembed.utils.dataset import train_valid_test_split
 from gembed.utils.transforms.subset_sample import SubsetSample
 
-PYVISTA_PLOT_KWARGS = {
-    "color" : "#cccccc",
-}
+def get_registration_cdim(experiment_name):
+    if "brain" in experiment_name:
+        cdim = 1
+    else:
+        cdim = 0
 
-PYVISTA_SAVE_KWARGS = {
-    "window_size" : [4000, 4000],
-    "color" : "#cccccc",
-    "point_size" : 20,
-    "cmap" : "cool",
-}
+    return cdim
+
+def get_plot_cdim(experiment_name):
+    if "skull" in experiment_name:
+        cdim = 1
+    else:
+        cdim = 0
+
+    return cdim
+
+def pyvista_plot_kwargs(experiment_name):
+    PYVISTA_PLOT_KWARGS = {
+        "color" : "#cccccc",
+        "point_size" : 10,
+        "cmap" : "cool",
+    }
+    # PYVISTA_PLOT_KWARGS = {
+    #     "color" : "#cccccc",
+    #     "cmap" : "cool",
+    #     #"clim" : [-1, 1],
+    # }
+
+    if "brain" in experiment_name:
+        PYVISTA_PLOT_KWARGS["camera_position"] = [(8, 0, 0), (0, 0, 0), (0, 0, 1)]
+    elif "dental" in experiment_name:
+        PYVISTA_PLOT_KWARGS["camera_position"] = [(-6, -6, 6), (0, 0, 0), (0, 0, 1)]
+    elif "skull" in experiment_name:
+        PYVISTA_PLOT_KWARGS["camera_position"] = [(-6, -6, 0), (0, 0, 0), (0, 0, 1)]
+    else:
+        PYVISTA_PLOT_KWARGS["camera_position"] = [(-6, -6, 0), (0, 0, 0), (0, 0, 1)]
+
+    return PYVISTA_PLOT_KWARGS
+
+def pyvista_save_kwargs(experiment_name):
+    PYVISTA_SAVE_KWARGS = {
+        #"window_size" : [4000, 4000],
+        "color" : "#cccccc",
+        "point_size" : 10,
+        "cmap" : "cool",
+    }
+    # PYVISTA_SAVE_KWARGS = {
+    #     "window_size" : [4000, 4000],
+    #     "color" : "#cccccc",
+    #     "point_size" : 20,
+    #     "cmap" : "cool",
+    # }
+
+    if "brain" in experiment_name:
+        PYVISTA_SAVE_KWARGS["camera_position"] = [(8, 0, 0), (0, 0, 0), (0, 0, 1)]
+    elif "dental" in experiment_name:
+        PYVISTA_SAVE_KWARGS["camera_position"] = [(-6, -6, 6), (0, 0, 0), (0, 0, 1)]
+    elif "skull" in experiment_name:
+        PYVISTA_SAVE_KWARGS["camera_position"] = [(-6, -6, 0), (0, 0, 0), (0, 0, 1)]
+    else:
+        PYVISTA_SAVE_KWARGS["camera_position"] = [(-6, -6, 0), (0, 0, 0), (0, 0, 1)]
+
+    return PYVISTA_SAVE_KWARGS
 
 def pathcat(str_1, str_2):
     """ Concatenates two strings representing file or directory paths.
@@ -61,7 +114,7 @@ def clean_result(X):
 
     return X
 
-def refine_result(model, X, Z, n_refinement_steps, batch_size=3000):
+def refine_result(model, X, Z, n_refinement_steps=20, batch_size=30000, score_threshold=None):
     """ Refines the input data `X` using gradient ascent based on a given model and condition Z.
 
         Args:
@@ -74,18 +127,26 @@ def refine_result(model, X, Z, n_refinement_steps, batch_size=3000):
         Returns:
             torch.Tensor: The refined input data after the specified number of refinement steps.
     """
-
     X_refined = X.clone()
+    f_grad=lambda x, b, c: model.pdm.score(
+        x, torch.Tensor([0.0]).to(x.device), b, c
+    )
+
     if n_refinement_steps > 0:
         X_refined = gradient_ascent(
             init_x = X_refined.requires_grad_(True),
-            f_grad=lambda x, b, c: model.pdm.score(
-                x, torch.Tensor([0.0]).to(x.device), b, c
-            ),
+            f_grad=f_grad,
             condition=Z.clone(),
             batch_size=batch_size,
             n_steps=n_refinement_steps,
+            step_size=1e-5,
+            #step_size=1e-1,
         ).detach()
+
+    if score_threshold is not None:
+        #score = f_grad(X_refined, torch.zeros(X_refined.shape[0]).long(), Z).pow(2).sum(-1)
+        score = f_grad(X_refined, torch.zeros(X_refined.shape[0]).long(), Z).abs().mean(-1)
+        X_refined = X_refined[score < score_threshold]
 
     return X_refined
 
@@ -135,7 +196,12 @@ def load_experiment(args):
     template = train[0].clone()
 
     # EXPERIMENT DEPENDENT UTILITY FUNCTIONS
-    T_sample = tgt.SamplePoints(8192) if hasattr(template, "face") else SubsetSample(8192)
+    if experiment_name == "brain" or experiment_name =="dental": # use the same amount of samples as used in training
+        n_point_samples = 2**15
+    else: 
+        n_point_samples = 8192
+
+    T_sample = tgt.SamplePoints(n_point_samples) if hasattr(template, "face") else SubsetSample(n_point_samples)
     f_refine = lambda X, Z, n_refinement_steps: refine_result(model, X, Z, n_refinement_steps, batch_size=3000)
 
     # SUMMARISE EXPERIMENT
@@ -148,6 +214,7 @@ def load_experiment(args):
     assert model.training == False, "Model still in training mode."
 
     return (
+        experiment_name,
         model,
         T_sample,
         f_refine,
